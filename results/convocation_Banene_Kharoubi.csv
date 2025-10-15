@@ -1,8 +1,0 @@
-code_smartex_ens,nom_ens,prenom_ens,grade_code_ens,creneau_id,jour,seance,date,h_debut,h_fin,cod_salle,responsable_salle,position
-188,Banene,Kharoubi,V,13/05/2025_14:30,1,S4,13/05/2025,14:30,16:00,A206,False,TITULAIRE
-188,Banene,Kharoubi,V,14/05/2025_08:30,2,S1,14/05/2025,08:30,10:00,B302,False,TITULAIRE
-188,Banene,Kharoubi,V,14/05/2025_10:30,2,S2,14/05/2025,10:30,12:00,A208,False,TITULAIRE
-188,Banene,Kharoubi,V,15/05/2025_08:30,3,S1,15/05/2025,08:30,10:00,B303,False,TITULAIRE
-188,Banene,Kharoubi,V,15/05/2025_10:30,3,S2,15/05/2025,10:30,12:00,A408,False,TITULAIRE
-188,Banene,Kharoubi,V,16/05/2025_12:30,4,S3,16/05/2025,12:30,14:00,A206,False,TITULAIRE
-188,Banene,Kharoubi,V,16/05/2025_14:30,4,S4,16/05/2025,14:30,16:00,A407,False,TITULAIRE
