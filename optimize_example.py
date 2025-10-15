@@ -3,7 +3,8 @@
 
 """
 Planificateur de surveillances avec OR-Tools CP-SAT
-Version SQLite CORRIGÉE avec contraintes optimisées
+Correction : Responsable peut surveiller d'AUTRES salles au même créneau
+Contrainte de présence responsable = SOFT (souple)
 """
 
 import os
@@ -12,6 +13,7 @@ import sqlite3
 from datetime import datetime
 import pandas as pd
 from ortools.sat.python import cp_model
+from surveillance_stats import generate_statistics
 
 # Configuration
 DB_NAME = 'surveillance.db'
@@ -27,17 +29,15 @@ def get_db_connection():
 
 
 def load_data_from_db(session_id):
-    """
-    ÉTAPE 0 : Charger toutes les données depuis la base de données
-    """
+    """Charger toutes les données depuis la base de données"""
     print("\n" + "="*60)
     print("CHARGEMENT DES DONNÉES DEPUIS SQLite")
     print("="*60)
     
     conn = get_db_connection()
     
-    # 1. Charger les enseignants avec leurs grades (SANS MAPPING)
-    print("\n📚 Chargement des enseignants...")
+    # 1. Charger les enseignants
+    print("\n📊 Chargement des enseignants...")
     enseignants_df = pd.read_sql_query("""
         SELECT 
             e.code_smartex_ens,
@@ -52,8 +52,8 @@ def load_data_from_db(session_id):
     """, conn)
     print(f"✓ {len(enseignants_df)} enseignants chargés")
     
-    # 2. Charger les créneaux d'examen pour la session
-    print("\n📅 Chargement des créneaux d'examen...")
+    # 2. Charger les créneaux d'examen
+    print("\nⓘ Chargement des créneaux d'examen...")
     planning_df = pd.read_sql_query("""
         SELECT 
             creneau_id,
@@ -69,7 +69,7 @@ def load_data_from_db(session_id):
     """, conn, params=(session_id,))
     print(f"✓ {len(planning_df)} créneaux d'examen chargés")
     
-    # 3. Créer salles_df (grouper par date/heure)
+    # 3. Créer salles_df
     print("\n🏫 Construction du fichier salles...")
     salles_df = planning_df[['dateExam', 'h_debut', 'h_fin', 'cod_salle']].copy()
     salles_df.columns = ['date_examen', 'heure_debut', 'heure_fin', 'salle']
@@ -77,7 +77,7 @@ def load_data_from_db(session_id):
     print(f"✓ {len(salles_df)} salles identifiées")
     
     # 4. Charger salle_par_creneau
-    print("\n🏢 Chargement de salle_par_creneau...")
+    print("\nⓘ Chargement de salle_par_creneau...")
     salle_par_creneau_df = pd.read_sql_query("""
         SELECT 
             dateExam,
@@ -88,8 +88,8 @@ def load_data_from_db(session_id):
     """, conn, params=(session_id,))
     print(f"✓ {len(salle_par_creneau_df)} entrées salle_par_creneau")
     
-    # 5. Charger les vœux de non-surveillance
-    print("\n🙅 Chargement des vœux...")
+    # 5. Charger les vœux
+    print("\nⓘ Chargement des vœux...")
     voeux_df = pd.read_sql_query("""
         SELECT 
             code_smartex_ens,
@@ -100,7 +100,7 @@ def load_data_from_db(session_id):
     """, conn, params=(session_id,))
     print(f"✓ {len(voeux_df)} vœux chargés")
     
-    # 6. Charger les paramètres de grades DIRECTEMENT depuis la base
+    # 6. Charger les paramètres de grades
     print("\n⚙️ Chargement des paramètres de grades...")
     parametres_df = pd.read_sql_query("""
         SELECT 
@@ -110,8 +110,8 @@ def load_data_from_db(session_id):
     """, conn)
     print(f"✓ {len(parametres_df)} grades chargés")
     
-    # 7. Créer mapping jours/séances depuis les créneaux
-    print("\n🗓️ Construction du mapping jours/séances...")
+    # 7. Créer mapping jours/séances
+    print("\n📅 Construction du mapping jours/séances...")
     dates_uniques = planning_df['dateExam'].unique()
     mapping_data = []
     
@@ -134,7 +134,7 @@ def load_data_from_db(session_id):
     
     conn.close()
     
-    print("\n✅ Toutes les données chargées depuis SQLite")
+    print("\n✓ Toutes les données chargées depuis SQLite")
     
     return enseignants_df, planning_df, salles_df, voeux_df, parametres_df, mapping_df, salle_par_creneau_df
 
@@ -178,9 +178,7 @@ def parse_time(time_str):
 
 
 def build_salle_responsable_mapping(planning_df):
-    """
-    Construire un mapping (date, heure, salle) -> code_responsable
-    """
+    """Construire un mapping (date, heure, salle) -> code_responsable"""
     print("\n=== Construction du mapping salle -> responsable ===")
     
     planning_df['h_debut_parsed'] = planning_df['h_debut'].apply(parse_time)
@@ -204,11 +202,29 @@ def build_salle_responsable_mapping(planning_df):
     return salle_responsable
 
 
+def build_creneau_responsables_mapping(creneaux):
+    """
+    Construire un mapping creneau_id -> dict avec info des responsables par salle
+    """
+    print("\n=== Construction du mapping créneau -> responsables par salle ===")
+    
+    creneau_responsables = {}
+    
+    for cid, cre in creneaux.items():
+        creneau_responsables[cid] = {}
+        
+        for salle_info in cre['salles_info']:
+            salle = salle_info['salle']
+            responsable = salle_info['responsable']
+            creneau_responsables[cid][salle] = responsable
+    
+    print(f"✓ {len(creneau_responsables)} créneaux avec infos responsables")
+    
+    return creneau_responsables
+
+
 def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df):
-    """
-    Construire les créneaux avec calcul correct du nombre de surveillants
-    FORMULE CORRIGÉE : nb_surveillants = nb_salles * 2 + 4 réserves par créneau
-    """
+    """Construire les créneaux avec calcul correct du nombre de surveillants"""
     print("\n=== ÉTAPE 1 : Construction des créneaux ===")
     
     salles_df['h_debut_parsed'] = salles_df['heure_debut'].apply(parse_time)
@@ -231,8 +247,7 @@ def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_d
         key = (date, h_debut)
         nb_salles = nb_salles_map.get(key, len(group))
         
-        # FORMULE CORRIGÉE : 2 surveillants par salle + 4 réserves par créneau
-        # Total surveillants = (nb_salles * 2) + 4
+        # FORMULE : 2 surveillants par salle + 4 réserves par créneau
         nb_reserves = 4
         nb_surveillants = (nb_salles * 2) + nb_reserves
         
@@ -260,9 +275,6 @@ def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_d
     print(f"✓ {len(creneaux)} créneaux identifiés")
     print(f"✓ Total surveillants requis : {sum(c['nb_surveillants'] for c in creneaux.values())}")
     
-    for cid, cre in list(creneaux.items())[:3]:
-        print(f"   Ex: {cid} -> {cre['nb_salles']} salles, {cre['nb_surveillants']} surveillants (dont {cre['nb_reserves']} réserves)")
-    
     return creneaux
 
 
@@ -282,7 +294,6 @@ def map_creneaux_to_jours_seances(creneaux, mapping_df):
             cre['jour'] = int(match.iloc[0]['jour_num'])
             cre['seance'] = match.iloc[0]['seance_code']
         else:
-            print(f"⚠️ Pas de mapping pour créneau {cid}")
             cre['jour'] = None
             cre['seance'] = None
     
@@ -291,13 +302,10 @@ def map_creneaux_to_jours_seances(creneaux, mapping_df):
 
 
 def build_teachers_dict(enseignants_df, parametres_df):
-    """
-    Construire le dictionnaire des enseignants avec leurs quotas
-    SANS MAPPING DES GRADES
-    """
+    """Construire le dictionnaire des enseignants avec leurs quotas"""
     print("\n=== ÉTAPE 3 : Préparation des enseignants ===")
     
-    # Construire le mapping grade -> quota depuis parametres_df
+    # Construire le mapping grade -> quota
     grade_quotas = {}
     for _, row in parametres_df.iterrows():
         grade = str(row['grade']).strip().upper()
@@ -318,11 +326,9 @@ def build_teachers_dict(enseignants_df, parametres_df):
         except (ValueError, TypeError):
             continue
         
-        # UTILISER LE GRADE TEL QUEL - SANS MAPPING
         grade = str(row['grade_code_ens']).strip().upper()
         
         if grade not in grade_quotas:
-            print(f"⚠️ Grade '{grade}' non trouvé dans les paramètres, ignoré")
             continue
         
         quota = grade_quotas[grade]
@@ -346,20 +352,6 @@ def build_teachers_dict(enseignants_df, parametres_df):
     
     print(f"✓ {len(teachers)} enseignants chargés")
     print(f"✓ {participent} enseignants participent")
-    print(f"✓ Répartition par grade :")
-    
-    grade_counts = {}
-    for t in teachers.values():
-        if t['participe']:
-            g = t['grade']
-            if g not in grade_counts:
-                grade_counts[g] = {'count': 0, 'quota_total': 0}
-            grade_counts[g]['count'] += 1
-            grade_counts[g]['quota_total'] += t['quota']
-    
-    for grade in sorted(grade_counts.keys()):
-        info = grade_counts[grade]
-        print(f"     {grade}: {info['count']} enseignants × quota = {info['quota_total']} surveillances max")
     
     return teachers
 
@@ -413,9 +405,7 @@ def optimize_surveillance_scheduling(
     mapping_df,
     salle_par_creneau_df
 ):
-    """
-    OPTIMISATION PRINCIPALE avec toutes les contraintes HARD
-    """
+    """Optimisation principale avec contraintes corrigées"""
     print("\n" + "="*60)
     print("DÉMARRAGE DE L'OPTIMISATION OR-TOOLS CP-SAT")
     print("="*60)
@@ -423,6 +413,7 @@ def optimize_surveillance_scheduling(
     salle_responsable = build_salle_responsable_mapping(planning_df)
     creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df)
     creneaux = map_creneaux_to_jours_seances(creneaux, mapping_df)
+    creneau_responsables = build_creneau_responsables_mapping(creneaux)
     teachers = build_teachers_dict(enseignants_df, parametres_df)
     voeux_set = build_voeux_set(voeux_df)
     
@@ -452,20 +443,30 @@ def optimize_surveillance_scheduling(
         for cid in creneau_ids:
             cre = creneaux[cid]
             
-            # CONTRAINTE HARD H2B : Exclusion par vœux
+            # CONTRAINTE H2B : Exclusion par vœux
             if (tcode, cre['jour'], cre['seance']) in voeux_set:
                 nb_exclusions_voeux += 1
                 continue
             
-            # CONTRAINTE HARD H2C : Exclusion si responsable de salle
-            est_responsable = False
-            for salle_info in cre['salles_info']:
-                if salle_info['responsable'] == tcode:
-                    est_responsable = True
-                    nb_exclusions_responsable += 1
-                    break
+            # CONTRAINTE H2C CORRIGÉE : L'enseignant ne peut surveiller que les salles
+            # dont il n'est PAS responsable dans ce créneau
+            est_responsable_toutes_salles = False
+            salles_disponibles = []
             
-            if est_responsable:
+            for salle_info in cre['salles_info']:
+                salle = salle_info['salle']
+                responsable = salle_info['responsable']
+                
+                if responsable == tcode:
+                    # L'enseignant est responsable de cette salle
+                    continue
+                else:
+                    # L'enseignant peut surveiller cette salle
+                    salles_disponibles.append(salle)
+            
+            if not salles_disponibles:
+                # L'enseignant est responsable de TOUTES les salles
+                nb_exclusions_responsable += 1
                 continue
             
             x[(tcode, cid)] = model.NewBoolVar(f"x_{tcode}_{cid}")
@@ -481,7 +482,6 @@ def optimize_surveillance_scheduling(
     
     # =========================================================================
     # CONTRAINTE HARD H1 : COUVERTURE COMPLÈTE DES CRÉNEAUX
-    # Chaque créneau doit avoir exactement le nombre de surveillants requis
     # =========================================================================
     print("\n[HARD H1] Couverture complète des créneaux")
     for cid in creneau_ids:
@@ -492,7 +492,6 @@ def optimize_surveillance_scheduling(
     
     # =========================================================================
     # CONTRAINTE HARD H2A : ÉQUITÉ STRICTE PAR GRADE
-    # Deux enseignants du même grade ne peuvent avoir un écart > 1 surveillance
     # =========================================================================
     print("\n[HARD H2A] Équité stricte entre enseignants du même grade")
     
@@ -516,7 +515,6 @@ def optimize_surveillance_scheduling(
                     model.Add(nb_t1 == sum(vars_t1))
                     model.Add(nb_t2 == sum(vars_t2))
                     
-                    # Écart max de 1 surveillance
                     model.Add(nb_t1 - nb_t2 <= 1)
                     model.Add(nb_t2 - nb_t1 <= 1)
                     nb_contraintes_equite += 2
@@ -524,22 +522,7 @@ def optimize_surveillance_scheduling(
     print(f"✓ H2A : {nb_contraintes_equite} contraintes d'équité ajoutées")
     
     # =========================================================================
-    # CONTRAINTE HARD H2B : RESPECT STRICT DES VŒUX
-    # Déjà géré par exclusion lors de la création des variables
-    # =========================================================================
-    print("\n[HARD H2B] Respect strict des vœux")
-    print(f"✓ H2B : {nb_exclusions_voeux} vœux respectés (exclusion variables)")
-    
-    # =========================================================================
-    # CONTRAINTE HARD H2C : ENSEIGNANT NE SURVEILLE PAS SA PROPRE SALLE
-    # Déjà géré par exclusion lors de la création des variables
-    # =========================================================================
-    print("\n[HARD H2C] Enseignant ne surveille pas sa propre salle")
-    print(f"✓ H2C : {nb_exclusions_responsable} exclusions appliquées")
-    
-    # =========================================================================
     # CONTRAINTE HARD H3A : RESPECT DES QUOTAS MAXIMUM
-    # Chaque enseignant ne peut dépasser son quota
     # =========================================================================
     print("\n[HARD H3A] Respect des quotas maximum")
     for tcode in teacher_codes:
@@ -553,14 +536,12 @@ def optimize_surveillance_scheduling(
     
     # =========================================================================
     # CONTRAINTE SOFT S1 : DISPERSION DANS LA MÊME JOURNÉE
-    # Pénaliser les séances non-consécutives dans la même journée
     # =========================================================================
     print("\n[SOFT S1] Dispersion des surveillances dans la même journée")
     
     dispersion_penalties = []
     
     for tcode in teacher_codes:
-        # Grouper les créneaux par jour
         creneaux_by_jour = {}
         for cid in creneau_ids:
             if (tcode, cid) in x:
@@ -569,7 +550,6 @@ def optimize_surveillance_scheduling(
                     creneaux_by_jour[jour] = []
                 creneaux_by_jour[jour].append(cid)
         
-        # Pour chaque jour, pénaliser les séances non-consécutives
         for jour, cids_jour in creneaux_by_jour.items():
             if len(cids_jour) <= 1:
                 continue
@@ -601,6 +581,34 @@ def optimize_surveillance_scheduling(
     print(f"✓ S1 : {len(dispersion_penalties)} pénalités de dispersion")
     
     # =========================================================================
+    # CONTRAINTE SOFT S2 : PRÉFÉRENCE POUR RESPONSABLES DISPONIBLES
+    # =========================================================================
+    print("\n[SOFT S2] Préférence pour présence responsables (contrainte souple)")
+    
+    presence_penalties = []
+    responsable_presence_map = {}  # Pour statistiques
+    
+    for cid in creneau_ids:
+        for salle, responsable in creneau_responsables[cid].items():
+            if responsable is None or responsable not in teacher_codes:
+                continue
+            
+            # Le responsable PEUT être absent (contrainte souple)
+            # On pénalise son absence (pas d'obligation stricte)
+            if (responsable, cid) in x:
+                # Si le responsable est assigné, pas de pénalité
+                absence_penalty = model.NewIntVar(0, 100, f"resp_penalty_{responsable}_{cid}")
+                
+                # Pénalité si le responsable n'est PAS assigné
+                model.Add(absence_penalty == 0).OnlyEnforceIf(x[(responsable, cid)])
+                model.Add(absence_penalty == 50).OnlyEnforceIf(x[(responsable, cid)].Not())
+                
+                presence_penalties.append(absence_penalty)
+                responsable_presence_map[(responsable, cid)] = salle
+    
+    print(f"✓ S2 : {len(presence_penalties)} pénalités de présence responsable (souple)")
+    
+    # =========================================================================
     # OBJECTIF : Minimiser les écarts + pénalités
     # =========================================================================
     print("\n=== DÉFINITION DE L'OBJECTIF ===")
@@ -624,9 +632,13 @@ def optimize_surveillance_scheduling(
             
             objective_terms.append(abs_delta)
     
-    # 2. Pénalités de dispersion (poids 5)
+    # 2. Pénalités de dispersion
     for penalty in dispersion_penalties:
         objective_terms.append(penalty * 5)
+    
+    # 3. Pénalités de présence responsable (souple)
+    for penalty in presence_penalties:
+        objective_terms.append(penalty * 2)
     
     model.Minimize(sum(objective_terms))
     
@@ -675,10 +687,6 @@ def optimize_surveillance_scheduling(
         
         print(f"✓ {len(affectations)} affectations extraites")
         
-        # Calculer et afficher les statistiques
-        stats = calculate_statistics(affectations, teachers, voeux_set, creneaux, teacher_codes, creneau_ids, x, solver)
-        print_statistics(stats)
-        
         affectations = assign_rooms_equitable(affectations, creneaux, planning_df)
         
     else:
@@ -687,208 +695,15 @@ def optimize_surveillance_scheduling(
             print("Le problème est INFAISABLE")
         elif status == cp_model.MODEL_INVALID:
             print("Le modèle est INVALIDE")
-        stats = None
-    
-    save_results(affectations, enseignants_df, solver, status, len(creneaux), stats)
     
     return {
         'status': 'ok' if status in (cp_model.OPTIMAL, cp_model.FEASIBLE) else 'infeasible',
-        'affectations': affectations,
-        'statistiques': stats
+        'affectations': affectations
     }
-
-
-def calculate_statistics(affectations, teachers, voeux_set, creneaux, teacher_codes, creneau_ids, x, solver):
-    """
-    Calculer les statistiques détaillées de la solution
-    """
-    print("\n=== CALCUL DES STATISTIQUES ===")
-    
-    aff_df = pd.DataFrame(affectations)
-    
-    # 1. TAUX DE RESPECT DES VŒUX
-    total_voeux = len(voeux_set)
-    voeux_respectes = total_voeux  # Par construction (exclusion des variables)
-    taux_voeux = 100.0 if total_voeux > 0 else 0
-    
-    # 2. ÉQUITÉ ENTRE SURVEILLANTS
-    # Calculer la charge de chaque enseignant
-    charges = {}
-    for tcode in teacher_codes:
-        nb_aff = len(aff_df[aff_df['code_smartex_ens'] == tcode])
-        quota = teachers[tcode]['quota']
-        charges[tcode] = {
-            'nb_affectations': nb_aff,
-            'quota': quota,
-            'taux': (nb_aff / quota * 100) if quota > 0 else 0
-        }
-    
-    # Calculer l'équité par grade
-    equite_par_grade = {}
-    teachers_by_grade = {}
-    for tcode in teacher_codes:
-        grade = teachers[tcode]['grade']
-        if grade not in teachers_by_grade:
-            teachers_by_grade[grade] = []
-        teachers_by_grade[grade].append(tcode)
-    
-    for grade, tcodes in teachers_by_grade.items():
-        if len(tcodes) <= 1:
-            equite_par_grade[grade] = {
-                'ecart_max': 0,
-                'ecart_moyen': 0,
-                'nb_enseignants': len(tcodes)
-            }
-            continue
-        
-        charges_grade = [charges[tc]['nb_affectations'] for tc in tcodes]
-        ecart_max = max(charges_grade) - min(charges_grade)
-        ecart_moyen = sum(abs(c - sum(charges_grade)/len(charges_grade)) for c in charges_grade) / len(charges_grade)
-        
-        equite_par_grade[grade] = {
-            'ecart_max': ecart_max,
-            'ecart_moyen': ecart_moyen,
-            'nb_enseignants': len(tcodes),
-            'charges': charges_grade
-        }
-    
-    # 3. TAUX DE RESPECT DES QUOTAS
-    nb_dans_quota = 0
-    nb_total = len(teacher_codes)
-    taux_respect_quota = {}
-    
-    for tcode in teacher_codes:
-        nb_aff = charges[tcode]['nb_affectations']
-        quota = charges[tcode]['quota']
-        taux = (nb_aff / quota * 100) if quota > 0 else 0
-        
-        grade = teachers[tcode]['grade']
-        if grade not in taux_respect_quota:
-            taux_respect_quota[grade] = []
-        taux_respect_quota[grade].append(taux)
-        
-        # Considérer comme respecté si entre 90% et 100%
-        if 90 <= taux <= 100:
-            nb_dans_quota += 1
-    
-    taux_global_respect = (nb_dans_quota / nb_total * 100) if nb_total > 0 else 0
-    
-    # 4. STATISTIQUES PAR GRADE
-    stats_par_grade = {}
-    for grade in teachers_by_grade.keys():
-        tcodes = teachers_by_grade[grade]
-        total_affectations = sum(charges[tc]['nb_affectations'] for tc in tcodes)
-        total_quota = sum(charges[tc]['quota'] for tc in tcodes)
-        taux_utilisation = (total_affectations / total_quota * 100) if total_quota > 0 else 0
-        
-        stats_par_grade[grade] = {
-            'nb_enseignants': len(tcodes),
-            'total_affectations': total_affectations,
-            'total_quota': total_quota,
-            'taux_utilisation': taux_utilisation,
-            'taux_individuels': taux_respect_quota.get(grade, [])
-        }
-    
-    # 5. DISTRIBUTION PAR SALLE (vérification 2-3 surveillants)
-    distribution_salles = {}
-    for cid in aff_df['creneau_id'].unique():
-        cid_df = aff_df[aff_df['creneau_id'] == cid]
-        if 'cod_salle' in cid_df.columns:
-            salle_counts = cid_df['cod_salle'].value_counts()
-            for salle, count in salle_counts.items():
-                if salle and str(salle) != 'nan':
-                    if count not in distribution_salles:
-                        distribution_salles[count] = 0
-                    distribution_salles[count] += 1
-    
-    # Vérification que personne n'a 6 surveillants par salle
-    has_6_per_room = 6 in distribution_salles or any(k > 6 for k in distribution_salles.keys())
-    
-    return {
-        'taux_voeux': {
-            'total': total_voeux,
-            'respectes': voeux_respectes,
-            'taux': taux_voeux
-        },
-        'equite': equite_par_grade,
-        'quotas': {
-            'taux_global': taux_global_respect,
-            'nb_dans_quota': nb_dans_quota,
-            'nb_total': nb_total,
-            'par_grade': stats_par_grade
-        },
-        'distribution_salles': distribution_salles,
-        'validation': {
-            'pas_de_6_par_salle': not has_6_per_room,
-            'distribution_ok': all(2 <= k <= 3 for k in distribution_salles.keys())
-        },
-        'charges_individuelles': charges
-    }
-
-
-def print_statistics(stats):
-    """
-    Afficher les statistiques de manière claire et structurée
-    """
-    print("\n" + "="*60)
-    print("📊 STATISTIQUES DE LA SOLUTION")
-    print("="*60)
-    
-    # 1. Vœux
-    print("\n🙅 RESPECT DES VŒUX")
-    print(f"   Total de vœux : {stats['taux_voeux']['total']}")
-    print(f"   Vœux respectés : {stats['taux_voeux']['respectes']}")
-    print(f"   ✓ Taux de respect : {stats['taux_voeux']['taux']:.1f}%")
-    
-    # 2. Équité
-    print("\n⚖️  ÉQUITÉ ENTRE ENSEIGNANTS")
-    for grade, info in stats['equite'].items():
-        print(f"   Grade {grade} ({info['nb_enseignants']} enseignants):")
-        print(f"      - Écart maximum : {info['ecart_max']} surveillance(s)")
-        print(f"      - Écart moyen : {info['ecart_moyen']:.2f}")
-        if 'charges' in info:
-            print(f"      - Distribution : {sorted(info['charges'])}")
-    
-    # 3. Quotas
-    print("\n📋 RESPECT DES QUOTAS (90-100%)")
-    print(f"   ✓ Taux global : {stats['quotas']['taux_global']:.1f}%")
-    print(f"   Enseignants dans quota : {stats['quotas']['nb_dans_quota']}/{stats['quotas']['nb_total']}")
-    
-    print("\n   Détail par grade :")
-    for grade, info in stats['quotas']['par_grade'].items():
-        print(f"   {grade}:")
-        print(f"      - Utilisation : {info['total_affectations']}/{info['total_quota']} ({info['taux_utilisation']:.1f}%)")
-        taux_min = min(info['taux_individuels']) if info['taux_individuels'] else 0
-        taux_max = max(info['taux_individuels']) if info['taux_individuels'] else 0
-        taux_moy = sum(info['taux_individuels'])/len(info['taux_individuels']) if info['taux_individuels'] else 0
-        print(f"      - Taux individuels : min={taux_min:.1f}%, max={taux_max:.1f}%, moy={taux_moy:.1f}%")
-    
-    # 4. Distribution par salle
-    print("\n🏫 DISTRIBUTION PAR SALLE")
-    for nb_surv, nb_salles in sorted(stats['distribution_salles'].items()):
-        print(f"   {nb_surv} surveillants : {nb_salles} salle(s)")
-    
-    # 5. Validations
-    print("\n✅ VALIDATIONS")
-    if stats['validation']['pas_de_6_par_salle']:
-        print("   ✓ Aucune salle avec 6 surveillants ou plus")
-    else:
-        print("   ❌ ERREUR : Des salles ont 6 surveillants ou plus !")
-    
-    if stats['validation']['distribution_ok']:
-        print("   ✓ Distribution respectée : 2-3 surveillants par salle")
-    else:
-        print("   ⚠️  Attention : Distribution non optimale détectée")
-    
-    print("="*60)
 
 
 def assign_rooms_equitable(affectations, creneaux, planning_df):
-    """
-    Affectation ÉQUITABLE des surveillants aux salles
-    RÈGLE STRICTE : 2 TITULAIRES par salle + 4 RÉSERVES distribuées 1 par 1
-    Distribution cyclique : chaque salle reçoit au maximum 3 surveillants (2 TITULAIRES + 1 RÉSERVE)
-    """
+    """Affectation ÉQUITABLE des surveillants aux salles"""
     print("\n=== AFFECTATION ÉQUITABLE AUX SALLES ===")
     
     # Créer le mapping (date, heure, salle) -> responsable
@@ -920,23 +735,16 @@ def assign_rooms_equitable(affectations, creneaux, planning_df):
         total_surv = len(cre_affs)
         
         # ALGORITHME DE DISTRIBUTION ÉQUITABLE
-        # Phase 1 : Affecter 2 TITULAIRES par salle
-        surv_per_salle = [2] * nb_salles  # Base : 2 titulaires par salle
-        titulaires_attendus = nb_salles * 2
+        # Phase 1 : 2 TITULAIRES par salle
+        surv_per_salle = [2] * nb_salles
         
-        # Phase 2 : Distribuer les 4 RÉSERVES de manière cyclique (1 par salle maximum)
-        # Les réserves sont distribuées aux 4 premières salles uniquement
+        # Phase 2 : Distribuer les 4 RÉSERVES (1 par salle maximum)
         reserves_per_salle = [0] * nb_salles
         for i in range(min(nb_reserves, nb_salles)):
             reserves_per_salle[i] = 1
             surv_per_salle[i] += 1
         
-        # Vérification : total doit être égal au nombre d'affectations
-        total_attendu = sum(surv_per_salle)
-        if total_attendu != total_surv:
-            print(f"   ⚠️  {cid}: Incohérence - Attendu {total_attendu}, Reçu {total_surv}")
-        
-        # Affectation effective avec position TITULAIRE / RESERVE
+        # Affectation effective
         idx = 0
         for i, salle_info in enumerate(salles_info):
             salle = salle_info['salle']
@@ -947,7 +755,6 @@ def assign_rooms_equitable(affectations, creneaux, planning_df):
                     row = cre_affs.iloc[idx].to_dict()
                     row['cod_salle'] = salle
                     
-                    # Déterminer si ce surveillant est le responsable de la salle
                     date = row['date']
                     h_debut = row['h_debut']
                     key = (date, h_debut, salle)
@@ -974,15 +781,12 @@ def assign_rooms_equitable(affectations, creneaux, planning_df):
                     results.append(row)
                     idx += 1
         
-        # Affichage de la distribution
-        nb_titulaires = sum(1 for r in results if r['creneau_id'] == cid and r['position'] == 'TITULAIRE')
-        nb_reserves_aff = sum(1 for r in results if r['creneau_id'] == cid and r['position'] == 'RESERVE')
-        
+        # Affichage
         max_surv = max(surv_per_salle)
         if max_surv > 3:
-            print(f"   ❌ {cid}: ERREUR - {max_surv} surveillants dans une salle (max autorisé: 3)")
+            print(f"   ⚠ {cid}: ERREUR - {max_surv} surveillants dans une salle")
         else:
-            print(f"   ✓ {cid}: {surv_per_salle} surveillants par salle ({nb_titulaires} titulaires + {nb_reserves_aff} réserves)")
+            print(f"   ✓ {cid}: {surv_per_salle} surveillants par salle")
     
     # Statistiques finales
     total_titulaires = sum(1 for r in results if r['position'] == 'TITULAIRE')
@@ -990,13 +794,12 @@ def assign_rooms_equitable(affectations, creneaux, planning_df):
     
     print(f"\n✓ {len(results)} affectations totales")
     print(f"✓ {total_titulaires} TITULAIRES + {total_reserves} RÉSERVES")
-    print(f"✓ Distribution respectée : 2 TITULAIRES par salle + 4 RÉSERVES par créneau")
     
     return results
 
 
-def save_results(affectations, enseignants_df, solver, status, nb_creneaux, stats):
-    """Sauvegarder les résultats TRIÉS avec statistiques"""
+def save_results(affectations):
+    """Sauvegarder les résultats"""
     print("\n=== SAUVEGARDE DES RÉSULTATS ===")
     
     aff_df = pd.DataFrame(affectations)
@@ -1028,147 +831,17 @@ def save_results(affectations, enseignants_df, solver, status, nb_creneaux, stat
             ens_df.to_csv(out, index=False, encoding='utf-8')
         
         print(f"✓ {len(aff_df['code_smartex_ens'].unique())} convocations individuelles")
-    
-    # Sauvegarder les statistiques complètes
-    stats_output = {
-        'date_execution': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        'status_solver': solver.StatusName(status),
-        'nb_enseignants_total': len(enseignants_df),
-        'nb_creneaux': nb_creneaux,
-        'nb_affectations': len(affectations),
-        'temps_resolution': f"{solver.WallTime():.2f}s"
-    }
-    
-    if stats:
-        stats_output['statistiques_detaillees'] = {
-            'taux_respect_voeux': f"{stats['taux_voeux']['taux']:.1f}%",
-            'taux_respect_quotas': f"{stats['quotas']['taux_global']:.1f}%",
-            'equite_par_grade': {
-                grade: {
-                    'ecart_max': info['ecart_max'],
-                    'ecart_moyen': round(info['ecart_moyen'], 2)
-                }
-                for grade, info in stats['equite'].items()
-            },
-            'validation': stats['validation']
-        }
-    
-    out_stats = os.path.join(OUTPUT_FOLDER, 'statistiques.json')
-    with open(out_stats, 'w', encoding='utf-8') as f:
-        json.dump(stats_output, f, ensure_ascii=False, indent=2)
-    print(f"✓ {out_stats}")
-
-
-def save_results_to_db(affectations, session_id):
-    """
-    ÉTAPE FINALE : Sauvegarder les résultats dans la base de données
-    """
-    print("\n" + "="*60)
-    print("SAUVEGARDE DANS LA BASE DE DONNÉES")
-    print("="*60)
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Supprimer les anciennes affectations de cette session
-    cursor.execute("""
-        DELETE FROM affectation 
-        WHERE id_session = ?
-    """, (session_id,))
-    
-    deleted = cursor.rowcount
-    print(f"\n🗑️ {deleted} anciennes affectations supprimées")
-    
-    # Créer un mapping (date, heure, salle) -> creneau_id
-    creneaux_map = {}
-    cursor.execute("""
-        SELECT creneau_id, dateExam, h_debut, cod_salle
-        FROM creneau
-        WHERE id_session = ?
-    """, (session_id,))
-    
-    for row in cursor.fetchall():
-        key = (row['dateExam'], parse_time(row['h_debut']), row['cod_salle'])
-        creneaux_map[key] = row['creneau_id']
-    
-    print(f"📋 {len(creneaux_map)} créneaux mappés")
-    
-    nb_inserted = 0
-    nb_errors = 0
-    errors_detail = {}
-    
-    for aff in affectations:
-        date = aff['date']
-        h_debut = aff['h_debut']
-        salle = aff.get('cod_salle')
-        code_ens = aff['code_smartex_ens']
-        jour = aff.get('jour')
-        seance = aff.get('seance')
-        h_fin = aff.get('h_fin')
-        position = aff.get('position', 'TITULAIRE')
-        
-        if not salle or pd.isna(salle):
-            nb_errors += 1
-            continue
-        
-        key = (date, h_debut, salle)
-        creneau_id = creneaux_map.get(key)
-        
-        if creneau_id is None:
-            # Essayer de trouver n'importe quel créneau avec cette date/heure
-            for k, v in creneaux_map.items():
-                if k[0] == date and k[1] == h_debut:
-                    creneau_id = v
-                    break
-        
-        if creneau_id:
-            try:
-                cursor.execute("""
-                    INSERT INTO affectation (
-                        code_smartex_ens, creneau_id, id_session,
-                        jour, seance, date_examen, h_debut, h_fin, 
-                        cod_salle, position
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (code_ens, creneau_id, session_id, jour, seance, 
-                      date, h_debut, h_fin, salle, position))
-                nb_inserted += 1
-            except sqlite3.IntegrityError as e:
-                nb_errors += 1
-                error_msg = str(e)
-                if error_msg not in errors_detail:
-                    errors_detail[error_msg] = 0
-                errors_detail[error_msg] += 1
-        else:
-            nb_errors += 1
-            if 'Créneau non trouvé' not in errors_detail:
-                errors_detail['Créneau non trouvé'] = 0
-            errors_detail['Créneau non trouvé'] += 1
-    
-    conn.commit()
-    conn.close()
-    
-    print(f"\n✅ {nb_inserted} affectations insérées dans la base")
-    if nb_errors > 0:
-        print(f"⚠️ {nb_errors} erreurs d'insertion")
-        if errors_detail:
-            print(f"\n📊 Détail des erreurs :")
-            for error, count in errors_detail.items():
-                print(f"   - {error}: {count} occurrences")
-    
-    return nb_inserted
 
 
 def main():
     """Point d'entrée principal"""
     print("\n" + "="*60)
     print("SYSTÈME DE PLANIFICATION DE SURVEILLANCES")
-    print("Version SQLite CORRIGÉE - Optimale")
+    print("Version avec Contraintes Corrigées")
     print("="*60)
     
     if not os.path.exists(DB_NAME):
         print(f"\n❌ Base de données '{DB_NAME}' introuvable!")
-        print("💡 Lancez d'abord 'create_database.py' pour créer la base")
         return
     
     conn = get_db_connection()
@@ -1179,21 +852,18 @@ def main():
     
     if not sessions:
         print("\n❌ Aucune session trouvée dans la base!")
-        print("💡 Créez d'abord une session dans la table 'session'")
         return
     
-    print("\n📋 Sessions disponibles :")
+    print("\nSessions disponibles :")
     for s in sessions:
         print(f"   [{s['id_session']}] {s['libelle_session']}")
     
-    session_id = int(input("\n🔢 Entrez l'ID de la session à optimiser: "))
+    session_id = int(input("\nEntrez l'ID de la session à optimiser: "))
     
     try:
         print("\nChargement des données depuis SQLite...")
         enseignants_df, planning_df, salles_df, voeux_df, parametres_df, mapping_df, salle_par_creneau_df = load_data_from_db(session_id)
-        
         print("✓ Toutes les données chargées")
-        
     except Exception as e:
         print(f"❌ Erreur de chargement : {e}")
         import traceback
@@ -1206,15 +876,23 @@ def main():
         voeux_df, parametres_df, mapping_df, salle_par_creneau_df
     )
     
-    # Sauvegarder les résultats uniquement si succès
+    # NOUVELLES VARIABLES À RÉCUPÉRER pour les stats
+    salle_responsable = build_salle_responsable_mapping(planning_df)
+    creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df)
+    creneaux = map_creneaux_to_jours_seances(creneaux, mapping_df)
+    teachers = build_teachers_dict(enseignants_df, parametres_df)
+    voeux_set = build_voeux_set(voeux_df)
+    
+    # Sauvegarder les résultats
     if result['status'] == 'ok' and len(result['affectations']) > 0:
-        # Sauvegarder en base de données
-        nb_inserted = save_results_to_db(result['affectations'], session_id)
-        
-        if nb_inserted > 0:
-            print(f"\n✅ {nb_inserted} affectations sauvegardées en base de données")
-        else:
-            print("\n⚠️ Aucune affectation n'a été sauvegardée en base")
+        stats = generate_statistics(
+            result['affectations'],
+            creneaux,
+            teachers,
+            voeux_set,
+            planning_df
+        )
+        save_results(result['affectations'])
     
     # Afficher le résumé final
     print("\n" + "="*60)
@@ -1224,19 +902,14 @@ def main():
     print(f"Affectations : {len(result['affectations'])}")
     print(f"Fichiers dans : {OUTPUT_FOLDER}")
     
-    if result['statistiques']:
-        print("\n📊 PERFORMANCES :")
-        print(f"   ✓ Respect des vœux : {result['statistiques']['taux_voeux']['taux']:.1f}%")
-        print(f"   ✓ Respect des quotas : {result['statistiques']['quotas']['taux_global']:.1f}%")
-        print(f"   ✓ Distribution : 2 TITULAIRES + 4 RÉSERVES par créneau")
-    
-    print("\n🎯 CONTRAINTES APPLIQUÉES :")
+    print("\nCONTRAINTES APPLIQUÉES :")
     print("   [HARD H1] ✓ Couverture complète des créneaux")
     print("   [HARD H2A] ✓ Équité stricte par grade (écart ≤ 1)")
     print("   [HARD H2B] ✓ Respect strict des vœux")
-    print("   [HARD H2C] ✓ Enseignant ne surveille pas sa propre salle")
+    print("   [HARD H2C] ✓ Responsable ne surveille pas sa propre salle")
     print("   [HARD H3A] ✓ Respect des quotas maximum")
     print("   [SOFT S1] ✓ Dispersion optimisée dans la journée")
+    print("   [SOFT S2] ✓ Préférence pour présence responsables (souple)")
     print("="*60 + "\n")
 
 
