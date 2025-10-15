@@ -4,9 +4,22 @@ from database import init_db
 from routes import init_routes
 import os
 
+from flask_cors import CORS
+
 app = Flask(__name__)
 app.config.from_object(Config)
 
+# Configure CORS with a restricted set of allowed origins.
+# The `CORS_ALLOWED_ORIGINS` can be a comma-separated env var. If empty, use localhost defaults for dev.
+raw_origins = getattr(Config, 'CORS_ALLOWED_ORIGINS', '') or ''
+if raw_origins.strip():
+    origins = [o.strip() for o in raw_origins.split(',') if o.strip()]
+else:
+    # sensible default for local development
+    origins = ['http://127.0.0.1:5000', 'http://localhost:5000','http://localhost:5173']
+
+# Apply CORS only for API routes and with explicit origins list
+CORS(app, resources={r"/api/*": {"origins": origins}}, supports_credentials=True)
 # Initialiser la base de données
 init_db(app)
 
