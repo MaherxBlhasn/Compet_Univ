@@ -1,7 +1,0 @@
-code_smartex_ens,nom_ens,prenom_ens,grade_code_ens,creneau_id,jour,seance,date,h_debut,h_fin,cod_salle,responsable_salle,position
-35,Feki,Meriem,MA,17/05/2025_08:30,5,S1,17/05/2025,08:30,10:00,B302,False,TITULAIRE
-50,Kallel,Mariem,MA,17/05/2025_08:30,5,S1,17/05/2025,08:30,10:00,B302,False,RESERVE
-45,Ouertani,Mourad,MA,17/05/2025_08:30,5,S1,17/05/2025,08:30,10:00,B302,False,TITULAIRE
-57,Karoui,Wafa,MA,17/05/2025_08:30,5,S1,17/05/2025,08:30,10:00,B303,False,TITULAIRE
-74,Mrabet,Wiem,MA,17/05/2025_08:30,5,S1,17/05/2025,08:30,10:00,B303,False,RESERVE
-67,Zagrouba,Rachid,MA,17/05/2025_08:30,5,S1,17/05/2025,08:30,10:00,B303,False,TITULAIRE
