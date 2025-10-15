@@ -1,0 +1,202 @@
+import sqlite3
+from flask import Blueprint, jsonify, request
+from database import get_db
+
+creneau_bp = Blueprint('creneaux', __name__)
+
+@creneau_bp.route('', methods=['GET'])
+def get_all_creneaux():
+    """GET /api/creneaux - Récupérer tous les créneaux"""
+    try:
+        db = get_db()
+        # Paramètres de filtrage optionnels
+        id_session = request.args.get('id_session', type=int)
+        date_exam = request.args.get('dateExam')
+        
+        query = '''
+            SELECT c.*, 
+                   s.libelle_session,
+                   e.nom_ens, e.prenom_ens
+            FROM creneau c
+            LEFT JOIN session s ON c.id_session = s.id_session
+            LEFT JOIN enseignant e ON c.enseignant = e.code_smartex_ens
+        '''
+        params = []
+        
+        # Ajouter des filtres si spécifiés
+        conditions = []
+        if id_session:
+            conditions.append('c.id_session = ?')
+            params.append(id_session)
+        if date_exam:
+            conditions.append('c.dateExam = ?')
+            params.append(date_exam)
+        
+        if conditions:
+            query += ' WHERE ' + ' AND '.join(conditions)
+        
+        query += ' ORDER BY c.dateExam, c.h_debut'
+        
+        cursor = db.execute(query, params)
+        creneaux = [dict(row) for row in cursor.fetchall()]
+        return jsonify(creneaux), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@creneau_bp.route('/<int:creneau_id>', methods=['GET'])
+def get_creneau(creneau_id):
+    """GET /api/creneaux/<id> - Récupérer un créneau avec ses affectations"""
+    try:
+        db = get_db()
+        # Récupérer le créneau
+        cursor = db.execute('''
+            SELECT c.*, 
+                   s.libelle_session,
+                   e.nom_ens, e.prenom_ens
+            FROM creneau c
+            LEFT JOIN session s ON c.id_session = s.id_session
+            LEFT JOIN enseignant e ON c.enseignant = e.code_smartex_ens
+            WHERE c.creneau_id = ?
+        ''', (creneau_id,))
+        creneau = cursor.fetchone()
+        
+        if creneau is None:
+            return jsonify({'error': 'Créneau non trouvé'}), 404
+        
+        creneau_dict = dict(creneau)
+        
+        # Récupérer les surveillants affectés
+        cursor = db.execute('''
+            SELECT a.code_smartex_ens, e.nom_ens, e.prenom_ens, 
+                   e.grade_code_ens, g.quota
+            FROM affectation a
+            JOIN enseignant e ON a.code_smartex_ens = e.code_smartex_ens
+            LEFT JOIN grade g ON e.grade_code_ens = g.code_grade
+            WHERE a.creneau_id = ?
+        ''', (creneau_id,))
+        creneau_dict['surveillants'] = [dict(row) for row in cursor.fetchall()]
+        
+        return jsonify(creneau_dict), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@creneau_bp.route('', methods=['POST'])
+def create_creneau():
+    """POST /api/creneaux - Créer un créneau"""
+    try:
+        data = request.get_json()
+        required = ['id_session', 'dateExam', 'h_debut', 'h_fin']
+        
+        if not data or not all(k in data for k in required):
+            return jsonify({'error': f'Champs requis: {", ".join(required)}'}), 400
+        
+        db = get_db()
+        cursor = db.execute('''
+            INSERT INTO creneau (id_session, dateExam, h_debut, h_fin, 
+                                type_ex, semestre, enseignant, cod_salle)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (data['id_session'], data['dateExam'], data['h_debut'], 
+              data['h_fin'], data.get('type_ex'), data.get('semestre'),
+              data.get('enseignant'), data.get('cod_salle')))
+        db.commit()
+        
+        return jsonify({
+            'message': 'Créneau créé avec succès',
+            'creneau_id': cursor.lastrowid
+        }), 201
+    except sqlite3.IntegrityError as e:
+        if 'FOREIGN KEY' in str(e):
+            return jsonify({'error': 'Session ou enseignant invalide'}), 400
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@creneau_bp.route('/<int:creneau_id>', methods=['PUT'])
+def update_creneau(creneau_id):
+    """PUT /api/creneaux/<id> - Modifier un créneau"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Données requises'}), 400
+        
+        db = get_db()
+        cursor = db.execute('''
+            UPDATE creneau 
+            SET id_session = COALESCE(?, id_session),
+                dateExam = COALESCE(?, dateExam),
+                h_debut = COALESCE(?, h_debut),
+                h_fin = COALESCE(?, h_fin),
+                type_ex = COALESCE(?, type_ex),
+                semestre = COALESCE(?, semestre),
+                enseignant = COALESCE(?, enseignant),
+                cod_salle = COALESCE(?, cod_salle)
+            WHERE creneau_id = ?
+        ''', (data.get('id_session'), data.get('dateExam'), 
+              data.get('h_debut'), data.get('h_fin'),
+              data.get('type_ex'), data.get('semestre'),
+              data.get('enseignant'), data.get('cod_salle'),
+              creneau_id))
+        db.commit()
+        
+        if cursor.rowcount == 0:
+            return jsonify({'error': 'Créneau non trouvé'}), 404
+        return jsonify({'message': 'Créneau modifié avec succès'}), 200
+    except sqlite3.IntegrityError as e:
+        return jsonify({'error': 'Session ou enseignant invalide'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@creneau_bp.route('/<int:creneau_id>', methods=['DELETE'])
+def delete_creneau(creneau_id):
+    """DELETE /api/creneaux/<id> - Supprimer un créneau"""
+    try:
+        db = get_db()
+        cursor = db.execute('DELETE FROM creneau WHERE creneau_id = ?', 
+                           (creneau_id,))
+        db.commit()
+        
+        if cursor.rowcount == 0:
+            return jsonify({'error': 'Créneau non trouvé'}), 404
+        return jsonify({'message': 'Créneau supprimé avec succès'}), 200
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'Impossible de supprimer: des affectations sont liées à ce créneau'}), 409
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@creneau_bp.route('/session/<int:id_session>/statistiques', methods=['GET'])
+def get_session_statistiques(id_session):
+    """GET /api/creneaux/session/<id>/statistiques - Statistiques d'une session"""
+    try:
+        db = get_db()
+        
+        # Nombre total de créneaux
+        cursor = db.execute('''
+            SELECT COUNT(*) as total_creneaux,
+                   COUNT(DISTINCT dateExam) as nb_jours
+            FROM creneau
+            WHERE id_session = ?
+        ''', (id_session,))
+        stats = dict(cursor.fetchone())
+        
+        # Nombre d'affectations
+        cursor = db.execute('''
+            SELECT COUNT(*) as total_affectations
+            FROM affectation a
+            JOIN creneau c ON a.creneau_id = c.creneau_id
+            WHERE c.id_session = ?
+        ''', (id_session,))
+        stats.update(dict(cursor.fetchone()))
+        
+        # Créneaux par date
+        cursor = db.execute('''
+            SELECT dateExam, COUNT(*) as nb_creneaux
+            FROM creneau
+            WHERE id_session = ?
+            GROUP BY dateExam
+            ORDER BY dateExam
+        ''', (id_session,))
+        stats['creneaux_par_jour'] = [dict(row) for row in cursor.fetchall()]
+        
+        return jsonify(stats), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

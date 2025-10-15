@@ -1,0 +1,31 @@
+
+
+
+curl -X POST http://localhost:5000/api/upload/import-from-uploads \
+     -H "Content-Type: application/json" \
+     -d '{
+       "id_session": 1,
+       "imports": {
+         "enseignants": "fichier_enseignants.xlsx",
+         "creneaux": "fichier_creneaux.xlsx",
+         "voeux": "fichier_voeux.xlsx"
+       }
+     }'
+
+curl -X POST http://localhost:5000/api/upload/import/enseignants \
+     -H "Content-Type: application/json" \
+     -d '{"filepath": "uploads/enseignants.xlsx"}'
+
+
+
+curl -X POST http://localhost:5000/api/upload/import/creneaux \
+     -H "Content-Type: application/json" \
+     -d '{"filepath": "uploads/creneaux.xlsx", "id_session": 1}'
+
+
+     POST http://127.0.0.1:5000/api/sessions
+    {
+  "libelle_session": "Session Mai 2025",
+  "date_debut": "2025-05-13",
+  "date_fin": "2025-05-20"
+}

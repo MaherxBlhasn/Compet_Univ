@@ -1,0 +1,8 @@
+{
+  "date_execution": "2025-10-15 12:05:57",
+  "status_solver": "OPTIMAL",
+  "nb_enseignants_total": 124,
+  "nb_creneaux": 23,
+  "nb_affectations": 700,
+  "temps_resolution": "4.18s"
+}

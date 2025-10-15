@@ -1,0 +1,7 @@
+code_smartex_ens,nom_ens,prenom_ens,grade_code_ens,creneau_id,jour,seance,date,h_debut,h_fin,cod_salle,responsable_salle,position
+27,Kammarti,Rayen,MA,17/05/2025_08:30,5,S1,17/05/2025,08:30,10:00,B302,False,RESERVE
+24,Masmoudi Touj,Sameh,MA,17/05/2025_08:30,5,S1,17/05/2025,08:30,10:00,B302,False,TITULAIRE
+20,Rekik,Ines,MA,17/05/2025_08:30,5,S1,17/05/2025,08:30,10:00,B302,False,TITULAIRE
+88,Ben Abdallah,Houda,MA,17/05/2025_08:30,5,S1,17/05/2025,08:30,10:00,B303,False,RESERVE
+38,Manai,Yassine,MA,17/05/2025_08:30,5,S1,17/05/2025,08:30,10:00,B303,False,TITULAIRE
+45,Ouertani,Mourad,MA,17/05/2025_08:30,5,S1,17/05/2025,08:30,10:00,B303,False,TITULAIRE
