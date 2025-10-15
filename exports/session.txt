@@ -1,2 +1,0 @@
-id_session,libelle_session,date_debut,date_fin
-1,Session Mai 2025,2025-05-13,2025-05-20
