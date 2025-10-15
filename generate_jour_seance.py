@@ -193,6 +193,32 @@ def generate_jour_seance_from_creneaux(session_id):
     print(f"   ✓ Jours: {stats['nb_jours']} (de jour 1 à {stats['nb_jours']})")
     print(f"   ✓ Séances: {stats['nb_seances']} (S1, S2, S3, S4, ...)")
     
+    # 8. Générer salle_par_creneau
+    print("\n8️⃣ Génération de salle_par_creneau...")
+    try:
+        # Supprimer les anciennes entrées pour cette session
+        cursor.execute("DELETE FROM salle_par_creneau WHERE id_session = ?", (session_id,))
+        
+        # Compter le nombre de salles pour chaque créneau
+        cursor.execute("""
+            INSERT INTO salle_par_creneau (id_session, dateExam, h_debut, nb_salle)
+            SELECT 
+                id_session, 
+                dateExam, 
+                h_debut,
+                COUNT(DISTINCT cod_salle) as nb_salle
+            FROM creneau
+            WHERE id_session = ?
+            GROUP BY id_session, dateExam, h_debut
+        """, (session_id,))
+        
+        inserted = cursor.rowcount
+        conn.commit()
+        print(f"   ✓ {inserted} créneaux avec leur nombre de salles insérés")
+    except Exception as e:
+        conn.rollback()
+        print(f"   ❌ Erreur lors de la génération de salle_par_creneau: {e}")
+    
     conn.close()
     
     print(f"\n{'='*70}")

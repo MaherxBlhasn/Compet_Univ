@@ -1,4 +1,0 @@
-code_smartex_ens,nom_ens,prenom_ens,grade_code_ens,creneau_id,jour,seance,date,h_debut,h_fin,cod_salle,responsable_salle,position
-104,Ben Henda,Rabii,PES,13/05/2025_08:30,1,S1,13/05/2025,08:30,10:00,B401,False,TITULAIRE
-104,Ben Henda,Rabii,PES,14/05/2025_14:30,2,S4,14/05/2025,14:30,16:00,B401,False,TITULAIRE
-104,Ben Henda,Rabii,PES,16/05/2025_14:30,4,S4,16/05/2025,14:30,16:00,A102,False,TITULAIRE

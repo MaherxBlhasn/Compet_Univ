@@ -179,8 +179,27 @@ def create_database():
     print("✅ Table 'affectation' créée (avec colonne jour)")
     
     conn.commit()
+    # =========================================================================
+    # TABLE: salle_par_creneau
+    # =========================================================================
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS salle_par_creneau (
+            id_session INTEGER NOT NULL,
+            dateExam TEXT NOT NULL,
+            h_debut TEXT NOT NULL,
+            nb_salle INTEGER NOT NULL,
+            PRIMARY KEY (id_session, dateExam, h_debut),
+            FOREIGN KEY (id_session) REFERENCES session(id_session)
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_salle_creneau_date
+        ON salle_par_creneau(dateExam, h_debut)
+    """)
+    print("✅ Table 'salle_par_creneau' créée")
+
     print("\n✅ Base de données créée avec succès")
-    print("✅ Tables créées : grade, session, enseignant, creneau, jour_seance, voeu, affectation")
+    print("✅ Tables créées : grade, session, enseignant, creneau, jour_seance, voeu, affectation, salle_par_creneau")
     
     insert_default_grades(cursor)
     
@@ -193,16 +212,16 @@ def create_database():
 def insert_default_grades(cursor):
     """Insérer les grades par défaut avec leurs quotas"""
     grades = [
-        ('PR', 6),
-        ('MA', 13),
-        ('PTC', 7),
-        ('AC', 10),
-        ('VA', 11),
+        ('PR', 5),    # Pour 21 surveillances / 5 enseignants ≈ 4.2 → 5 surveillances/ens
+        ('MA', 13),   # Maintenu car déjà optimal
+        ('PTC', 7),   # Maintenu car déjà optimal
+        ('AC', 7),    # Pour 54 surveillances / 8 enseignants ≈ 6.75 → 7 surveillances/ens
+        ('VA', 11),   # Maintenu car déjà optimal
         ('AS', 0),
         ('EX', 0),
         ('PES', 0),
         ('MC', 0),
-        ('V', 10)
+        ('V', 7)     # Pour 81 surveillances / 12 enseignants ≈ 6.75 → 7 surveillances/ens
     ]
     
     cursor.executemany("""

@@ -85,13 +85,28 @@ def determine_seance_from_time(time_str):
 
 
 def generate_jour_seance_from_creneaux(session_id):
-    """Remplit automatiquement la table jour_seance"""
+    """Remplit automatiquement les tables jour_seance et salle_par_creneau"""
     try:
         conn = sqlite3.connect('surveillance.db')
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
-        # Récupère tous les créneaux
+        # Générer salle_par_creneau d'abord
+        print("Génération de salle_par_creneau...")
+        cursor.execute("DELETE FROM salle_par_creneau WHERE id_session = ?", (session_id,))
+        cursor.execute("""
+            INSERT INTO salle_par_creneau (id_session, dateExam, h_debut, nb_salle)
+            SELECT 
+                id_session, 
+                dateExam, 
+                h_debut,
+                COUNT(DISTINCT cod_salle) as nb_salle
+            FROM creneau
+            WHERE id_session = ?
+            GROUP BY id_session, dateExam, h_debut
+        """, (session_id,))
+        
+        # Récupère tous les créneaux pour jour_seance
         cursor.execute("""
             SELECT DISTINCT dateExam, h_debut, h_fin
             FROM creneau
