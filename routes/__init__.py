@@ -10,6 +10,8 @@ def init_routes(app):
     from routes.affectation_routes import affectation_bp
     from routes.upload_routes import upload_bp
     from routes.optimize_routes import optimize_bp
+    from routes.quota_enseignant_routes import quota_enseignant_bp
+    from routes.salle_par_creneau_routes import salle_par_creneau_bp
     
     app.register_blueprint(grade_bp, url_prefix='/api/grades')
     app.register_blueprint(session_bp, url_prefix='/api/sessions')
@@ -19,3 +21,5 @@ def init_routes(app):
     app.register_blueprint(affectation_bp, url_prefix='/api/affectations')
     app.register_blueprint(upload_bp, url_prefix='/api/upload')
     app.register_blueprint(optimize_bp, url_prefix='/api/affectations')
+    app.register_blueprint(quota_enseignant_bp, url_prefix='/api/quota-enseignants')
+    app.register_blueprint(salle_par_creneau_bp, url_prefix='/api/salles-par-creneau')

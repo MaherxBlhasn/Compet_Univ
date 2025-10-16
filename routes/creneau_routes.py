@@ -163,6 +163,156 @@ def delete_creneau(creneau_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@creneau_bp.route('/all', methods=['DELETE'])
+def delete_all_creneaux():
+    """DELETE /api/creneaux/all - Supprimer tous les créneaux"""
+    try:
+        db = get_db()
+        cursor = db.execute('DELETE FROM creneau')
+        db.commit()
+        
+        return jsonify({
+            'message': f'{cursor.rowcount} créneaux supprimés avec succès',
+            'count': cursor.rowcount
+        }), 200
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'Impossible de supprimer: certains créneaux ont des affectations'}), 409
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@creneau_bp.route('/session/<int:id_session>', methods=['DELETE'])
+def delete_creneaux_by_session(id_session):
+    """DELETE /api/creneaux/session/<id> - Supprimer tous les créneaux d'une session"""
+    try:
+        db = get_db()
+        cursor = db.execute('DELETE FROM creneau WHERE id_session = ?', (id_session,))
+        db.commit()
+        
+        return jsonify({
+            'message': f'{cursor.rowcount} créneaux supprimés avec succès',
+            'count': cursor.rowcount
+        }), 200
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'Impossible de supprimer: certains créneaux ont des affectations'}), 409
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@creneau_bp.route('/batch', methods=['POST'])
+def create_creneaux_batch():
+    """POST /api/creneaux/batch - Créer plusieurs créneaux en une fois"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'creneaux' not in data:
+            return jsonify({'error': 'Liste de créneaux requise'}), 400
+        
+        creneaux_list = data['creneaux']
+        required = ['id_session', 'dateExam', 'h_debut', 'h_fin']
+        
+        # Valider tous les créneaux
+        for creneau in creneaux_list:
+            if not all(k in creneau for k in required):
+                return jsonify({'error': f'Champs requis: {", ".join(required)}'}), 400
+        
+        db = get_db()
+        created_ids = []
+        errors = []
+        
+        for creneau in creneaux_list:
+            try:
+                cursor = db.execute('''
+                    INSERT INTO creneau (id_session, dateExam, h_debut, h_fin, 
+                                        type_ex, semestre, enseignant, cod_salle)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (creneau['id_session'], creneau['dateExam'], creneau['h_debut'], 
+                      creneau['h_fin'], creneau.get('type_ex'), creneau.get('semestre'),
+                      creneau.get('enseignant'), creneau.get('cod_salle')))
+                created_ids.append(cursor.lastrowid)
+            except sqlite3.IntegrityError as e:
+                errors.append({
+                    'creneau': creneau,
+                    'error': 'Session ou enseignant invalide'
+                })
+            except Exception as e:
+                errors.append({
+                    'creneau': creneau,
+                    'error': str(e)
+                })
+        
+        db.commit()
+        
+        return jsonify({
+            'message': f'{len(created_ids)} créneaux créés avec succès',
+            'created_ids': created_ids,
+            'errors': errors
+        }), 201 if created_ids else 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@creneau_bp.route('/batch', methods=['PUT'])
+def update_creneaux_batch():
+    """PUT /api/creneaux/batch - Modifier plusieurs créneaux en une fois"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'creneaux' not in data:
+            return jsonify({'error': 'Liste de créneaux requise'}), 400
+        
+        creneaux_list = data['creneaux']
+        
+        db = get_db()
+        updated = []
+        errors = []
+        
+        for creneau in creneaux_list:
+            if 'creneau_id' not in creneau:
+                errors.append({
+                    'creneau': creneau,
+                    'error': 'creneau_id requis'
+                })
+                continue
+            
+            try:
+                cursor = db.execute('''
+                    UPDATE creneau 
+                    SET id_session = COALESCE(?, id_session),
+                        dateExam = COALESCE(?, dateExam),
+                        h_debut = COALESCE(?, h_debut),
+                        h_fin = COALESCE(?, h_fin),
+                        type_ex = COALESCE(?, type_ex),
+                        semestre = COALESCE(?, semestre),
+                        enseignant = COALESCE(?, enseignant),
+                        cod_salle = COALESCE(?, cod_salle)
+                    WHERE creneau_id = ?
+                ''', (creneau.get('id_session'), creneau.get('dateExam'), 
+                      creneau.get('h_debut'), creneau.get('h_fin'),
+                      creneau.get('type_ex'), creneau.get('semestre'),
+                      creneau.get('enseignant'), creneau.get('cod_salle'),
+                      creneau['creneau_id']))
+                
+                if cursor.rowcount > 0:
+                    updated.append(creneau['creneau_id'])
+                else:
+                    errors.append({
+                        'creneau': creneau,
+                        'error': 'Créneau non trouvé'
+                    })
+            except Exception as e:
+                errors.append({
+                    'creneau': creneau,
+                    'error': str(e)
+                })
+        
+        db.commit()
+        
+        return jsonify({
+            'message': f'{len(updated)} créneaux modifiés avec succès',
+            'updated': updated,
+            'errors': errors
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @creneau_bp.route('/session/<int:id_session>/statistiques', methods=['GET'])
 def get_session_statistiques(id_session):
     """GET /api/creneaux/session/<id>/statistiques - Statistiques d'une session"""

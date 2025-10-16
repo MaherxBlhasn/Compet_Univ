@@ -242,3 +242,59 @@ def delete_voeux_enseignant_session(code_smartex_ens, id_session):
         }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@voeu_bp.route('/all', methods=['DELETE'])
+def delete_all_voeux():
+    """DELETE /api/voeux/all - Supprimer tous les vœux"""
+    try:
+        db = get_db()
+        cursor = db.execute('DELETE FROM voeu')
+        db.commit()
+        
+        return jsonify({
+            'message': f'{cursor.rowcount} vœux supprimés avec succès',
+            'count': cursor.rowcount
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@voeu_bp.route('/session/<int:id_session>', methods=['DELETE'])
+def delete_voeux_by_session(id_session):
+    """DELETE /api/voeux/session/<id> - Supprimer tous les vœux d'une session"""
+    try:
+        db = get_db()
+        cursor = db.execute('DELETE FROM voeu WHERE id_session = ?', (id_session,))
+        db.commit()
+        
+        return jsonify({
+            'message': f'{cursor.rowcount} vœux supprimés avec succès',
+            'count': cursor.rowcount
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@voeu_bp.route('/batch', methods=['DELETE'])
+def delete_voeux_batch():
+    """DELETE /api/voeux/batch - Supprimer plusieurs vœux par leurs IDs"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'voeu_ids' not in data:
+            return jsonify({'error': 'Liste d\'IDs de vœux requise'}), 400
+        
+        voeu_ids = data['voeu_ids']
+        
+        if not isinstance(voeu_ids, list) or len(voeu_ids) == 0:
+            return jsonify({'error': 'La liste d\'IDs doit être non vide'}), 400
+        
+        db = get_db()
+        placeholders = ','.join(['?' for _ in voeu_ids])
+        cursor = db.execute(f'DELETE FROM voeu WHERE voeu_id IN ({placeholders})', voeu_ids)
+        db.commit()
+        
+        return jsonify({
+            'message': f'{cursor.rowcount} vœux supprimés avec succès',
+            'count': cursor.rowcount
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

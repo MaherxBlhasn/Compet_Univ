@@ -139,3 +139,128 @@ def get_max_jours_for_session(id_session):
         return jsonify(dict(session_max_jour)), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@session_bp.route('/all', methods=['DELETE'])
+def delete_all_sessions():
+    """DELETE /api/sessions/all - Supprimer toutes les sessions"""
+    try:
+        db = get_db()
+        cursor = db.execute('DELETE FROM session')
+        db.commit()
+        
+        return jsonify({
+            'message': f'{cursor.rowcount} sessions supprimées avec succès',
+            'count': cursor.rowcount
+        }), 200
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'Impossible de supprimer: certaines sessions ont des créneaux/vœux'}), 409
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@session_bp.route('/batch', methods=['POST'])
+def create_sessions_batch():
+    """POST /api/sessions/batch - Créer plusieurs sessions en une fois"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'sessions' not in data:
+            return jsonify({'error': 'Liste de sessions requise'}), 400
+        
+        sessions_list = data['sessions']
+        
+        # Valider toutes les sessions
+        for session in sessions_list:
+            if 'libelle_session' not in session:
+                return jsonify({'error': 'libelle_session requis pour chaque session'}), 400
+        
+        db = get_db()
+        created_ids = []
+        errors = []
+        
+        for session in sessions_list:
+            try:
+                cursor = db.execute('''
+                    INSERT INTO session (libelle_session, date_debut, date_fin)
+                    VALUES (?, ?, ?)
+                ''', (session['libelle_session'], 
+                      session.get('date_debut'), 
+                      session.get('date_fin')))
+                created_ids.append(cursor.lastrowid)
+            except sqlite3.IntegrityError:
+                errors.append({
+                    'session': session,
+                    'error': 'Une session avec ce libellé existe déjà'
+                })
+            except Exception as e:
+                errors.append({
+                    'session': session,
+                    'error': str(e)
+                })
+        
+        db.commit()
+        
+        return jsonify({
+            'message': f'{len(created_ids)} sessions créées avec succès',
+            'created_ids': created_ids,
+            'errors': errors
+        }), 201 if created_ids else 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@session_bp.route('/batch', methods=['PUT'])
+def update_sessions_batch():
+    """PUT /api/sessions/batch - Modifier plusieurs sessions en une fois"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'sessions' not in data:
+            return jsonify({'error': 'Liste de sessions requise'}), 400
+        
+        sessions_list = data['sessions']
+        
+        db = get_db()
+        updated = []
+        errors = []
+        
+        for session in sessions_list:
+            if 'id_session' not in session:
+                errors.append({
+                    'session': session,
+                    'error': 'id_session requis'
+                })
+                continue
+            
+            try:
+                cursor = db.execute('''
+                    UPDATE session 
+                    SET libelle_session = COALESCE(?, libelle_session),
+                        date_debut = COALESCE(?, date_debut),
+                        date_fin = COALESCE(?, date_fin)
+                    WHERE id_session = ?
+                ''', (session.get('libelle_session'),
+                      session.get('date_debut'),
+                      session.get('date_fin'),
+                      session['id_session']))
+                
+                if cursor.rowcount > 0:
+                    updated.append(session['id_session'])
+                else:
+                    errors.append({
+                        'session': session,
+                        'error': 'Session non trouvée'
+                    })
+            except Exception as e:
+                errors.append({
+                    'session': session,
+                    'error': str(e)
+                })
+        
+        db.commit()
+        
+        return jsonify({
+            'message': f'{len(updated)} sessions modifiées avec succès',
+            'updated': updated,
+            'errors': errors
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

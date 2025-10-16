@@ -138,6 +138,90 @@ def create_affectation():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@affectation_bp.route('/<int:affectation_id>', methods=['PUT'])
+def update_affectation(affectation_id):
+    """PUT /api/affectations/<id> - Modifier une affectation (par ID)"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Données requises'}), 400
+        
+        db = get_db()
+        
+        # Vérifier que l'affectation existe
+        cursor = db.execute('SELECT * FROM affectation WHERE affectation_id = ?', (affectation_id,))
+        affectation = cursor.fetchone()
+        
+        if not affectation:
+            return jsonify({'error': 'Affectation non trouvée'}), 404
+        
+        # Si on modifie l'enseignant, vérifier qu'il participe à la surveillance
+        if 'code_smartex_ens' in data:
+            cursor = db.execute('''
+                SELECT participe_surveillance FROM enseignant 
+                WHERE code_smartex_ens = ?
+            ''', (data['code_smartex_ens'],))
+            ens = cursor.fetchone()
+            
+            if not ens:
+                return jsonify({'error': 'Enseignant non trouvé'}), 404
+            if not ens['participe_surveillance']:
+                return jsonify({'error': 'Cet enseignant ne participe pas à la surveillance'}), 400
+        
+        # Construire la requête UPDATE dynamiquement
+        fields_to_update = []
+        params = []
+        
+        if 'code_smartex_ens' in data:
+            fields_to_update.append('code_smartex_ens = ?')
+            params.append(data['code_smartex_ens'])
+        if 'creneau_id' in data:
+            fields_to_update.append('creneau_id = ?')
+            params.append(data['creneau_id'])
+        if 'jour' in data:
+            fields_to_update.append('jour = ?')
+            params.append(data['jour'])
+        if 'seance' in data:
+            fields_to_update.append('seance = ?')
+            params.append(data['seance'])
+        if 'date_examen' in data:
+            fields_to_update.append('date_examen = ?')
+            params.append(data['date_examen'])
+        if 'h_debut' in data:
+            fields_to_update.append('h_debut = ?')
+            params.append(data['h_debut'])
+        if 'h_fin' in data:
+            fields_to_update.append('h_fin = ?')
+            params.append(data['h_fin'])
+        if 'cod_salle' in data:
+            fields_to_update.append('cod_salle = ?')
+            params.append(data['cod_salle'])
+        if 'position' in data:
+            fields_to_update.append('position = ?')
+            params.append(data['position'])
+        if 'id_session' in data:
+            fields_to_update.append('id_session = ?')
+            params.append(data['id_session'])
+        
+        if not fields_to_update:
+            return jsonify({'error': 'Aucun champ à mettre à jour'}), 400
+        
+        params.append(affectation_id)
+        query = f"UPDATE affectation SET {', '.join(fields_to_update)} WHERE affectation_id = ?"
+        
+        db.execute(query, params)
+        db.commit()
+        
+        return jsonify({'message': 'Affectation modifiée avec succès'}), 200
+    except sqlite3.IntegrityError as e:
+        if 'UNIQUE' in str(e):
+            return jsonify({'error': 'Cette affectation existe déjà'}), 409
+        if 'FOREIGN KEY' in str(e):
+            return jsonify({'error': 'Enseignant ou créneau invalide'}), 400
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @affectation_bp.route('/<int:code_smartex_ens>/<int:creneau_id>', methods=['DELETE'])
 def delete_affectation(code_smartex_ens, creneau_id):
     """DELETE /api/affectations/<code_ens>/<creneau_id> - Supprimer une affectation"""
@@ -152,6 +236,161 @@ def delete_affectation(code_smartex_ens, creneau_id):
         if cursor.rowcount == 0:
             return jsonify({'error': 'Affectation non trouvée'}), 404
         return jsonify({'message': 'Affectation supprimée avec succès'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@affectation_bp.route('/by-id/<int:affectation_id>', methods=['DELETE'])
+def delete_affectation_by_id(affectation_id):
+    """DELETE /api/affectations/by-id/<id> - Supprimer une affectation par ID"""
+    try:
+        db = get_db()
+        cursor = db.execute('DELETE FROM affectation WHERE affectation_id = ?', (affectation_id,))
+        db.commit()
+        
+        if cursor.rowcount == 0:
+            return jsonify({'error': 'Affectation non trouvée'}), 404
+        return jsonify({'message': 'Affectation supprimée avec succès'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@affectation_bp.route('/all', methods=['DELETE'])
+def delete_all_affectations():
+    """DELETE /api/affectations/all - Supprimer toutes les affectations"""
+    try:
+        db = get_db()
+        cursor = db.execute('DELETE FROM affectation')
+        db.commit()
+        
+        return jsonify({
+            'message': f'{cursor.rowcount} affectations supprimées avec succès',
+            'count': cursor.rowcount
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@affectation_bp.route('/session/<int:id_session>', methods=['DELETE'])
+def delete_affectations_by_session(id_session):
+    """DELETE /api/affectations/session/<id> - Supprimer toutes les affectations d'une session"""
+    try:
+        db = get_db()
+        cursor = db.execute('''
+            DELETE FROM affectation 
+            WHERE id_session = ?
+        ''', (id_session,))
+        db.commit()
+        
+        return jsonify({
+            'message': f'{cursor.rowcount} affectations supprimées avec succès',
+            'count': cursor.rowcount
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@affectation_bp.route('/batch', methods=['DELETE'])
+def delete_affectations_batch():
+    """DELETE /api/affectations/batch - Supprimer plusieurs affectations par leurs IDs"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'affectation_ids' not in data:
+            return jsonify({'error': 'Liste d\'IDs d\'affectations requise'}), 400
+        
+        affectation_ids = data['affectation_ids']
+        
+        if not isinstance(affectation_ids, list) or len(affectation_ids) == 0:
+            return jsonify({'error': 'La liste d\'IDs doit être non vide'}), 400
+        
+        db = get_db()
+        placeholders = ','.join(['?' for _ in affectation_ids])
+        cursor = db.execute(f'DELETE FROM affectation WHERE affectation_id IN ({placeholders})', affectation_ids)
+        db.commit()
+        
+        return jsonify({
+            'message': f'{cursor.rowcount} affectations supprimées avec succès',
+            'count': cursor.rowcount
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@affectation_bp.route('/batch', methods=['PUT'])
+def update_affectations_batch():
+    """PUT /api/affectations/batch - Modifier plusieurs affectations en une fois"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'affectations' not in data:
+            return jsonify({'error': 'Liste d\'affectations requise'}), 400
+        
+        affectations_list = data['affectations']
+        
+        db = get_db()
+        updated = []
+        errors = []
+        
+        for aff in affectations_list:
+            if 'affectation_id' not in aff:
+                errors.append({
+                    'affectation': aff,
+                    'error': 'affectation_id requis'
+                })
+                continue
+            
+            try:
+                # Construire la requête UPDATE dynamiquement
+                fields_to_update = []
+                params = []
+                
+                if 'code_smartex_ens' in aff:
+                    fields_to_update.append('code_smartex_ens = ?')
+                    params.append(aff['code_smartex_ens'])
+                if 'creneau_id' in aff:
+                    fields_to_update.append('creneau_id = ?')
+                    params.append(aff['creneau_id'])
+                if 'jour' in aff:
+                    fields_to_update.append('jour = ?')
+                    params.append(aff['jour'])
+                if 'seance' in aff:
+                    fields_to_update.append('seance = ?')
+                    params.append(aff['seance'])
+                if 'cod_salle' in aff:
+                    fields_to_update.append('cod_salle = ?')
+                    params.append(aff['cod_salle'])
+                if 'position' in aff:
+                    fields_to_update.append('position = ?')
+                    params.append(aff['position'])
+                
+                if not fields_to_update:
+                    errors.append({
+                        'affectation': aff,
+                        'error': 'Aucun champ à mettre à jour'
+                    })
+                    continue
+                
+                params.append(aff['affectation_id'])
+                query = f"UPDATE affectation SET {', '.join(fields_to_update)} WHERE affectation_id = ?"
+                
+                cursor = db.execute(query, params)
+                
+                if cursor.rowcount > 0:
+                    updated.append(aff['affectation_id'])
+                else:
+                    errors.append({
+                        'affectation': aff,
+                        'error': 'Affectation non trouvée'
+                    })
+            except Exception as e:
+                errors.append({
+                    'affectation': aff,
+                    'error': str(e)
+                })
+        
+        db.commit()
+        
+        return jsonify({
+            'message': f'{len(updated)} affectations modifiées avec succès',
+            'updated': updated,
+            'errors': errors
+        }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -451,4 +690,192 @@ def check_conflits_enseignant(code_smartex_ens):
             'conflits': conflits
         }), 200
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@affectation_bp.route('/permuter', methods=['POST'])
+def permuter_enseignants():
+    """
+    POST /api/affectations/permuter - Permuter deux enseignants entre leurs créneaux
+    
+    Body JSON:
+    {
+        "affectation_id_1": 123,
+        "affectation_id_2": 456
+    }
+    OU
+    {
+        "code_smartex_ens_1": 100,
+        "creneau_id_1": 50,
+        "code_smartex_ens_2": 200,
+        "creneau_id_2": 60
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Données requises'}), 400
+        
+        db = get_db()
+        
+        # Mode 1 : Par IDs d'affectation
+        if 'affectation_id_1' in data and 'affectation_id_2' in data:
+            affectation_id_1 = data['affectation_id_1']
+            affectation_id_2 = data['affectation_id_2']
+            
+            # Récupérer les affectations
+            cursor = db.execute('SELECT * FROM affectation WHERE affectation_id = ?', (affectation_id_1,))
+            aff1 = cursor.fetchone()
+            
+            cursor = db.execute('SELECT * FROM affectation WHERE affectation_id = ?', (affectation_id_2,))
+            aff2 = cursor.fetchone()
+            
+            if not aff1:
+                return jsonify({'error': f'Affectation {affectation_id_1} non trouvée'}), 404
+            if not aff2:
+                return jsonify({'error': f'Affectation {affectation_id_2} non trouvée'}), 404
+            
+            code_ens_1 = aff1['code_smartex_ens']
+            creneau_id_1 = aff1['creneau_id']
+            code_ens_2 = aff2['code_smartex_ens']
+            creneau_id_2 = aff2['creneau_id']
+        
+        # Mode 2 : Par codes enseignants et créneaux
+        elif all(k in data for k in ['code_smartex_ens_1', 'creneau_id_1', 'code_smartex_ens_2', 'creneau_id_2']):
+            code_ens_1 = data['code_smartex_ens_1']
+            creneau_id_1 = data['creneau_id_1']
+            code_ens_2 = data['code_smartex_ens_2']
+            creneau_id_2 = data['creneau_id_2']
+            
+            # Vérifier que les affectations existent
+            cursor = db.execute('''
+                SELECT affectation_id FROM affectation 
+                WHERE code_smartex_ens = ? AND creneau_id = ?
+            ''', (code_ens_1, creneau_id_1))
+            if not cursor.fetchone():
+                return jsonify({'error': f'Affectation (enseignant={code_ens_1}, créneau={creneau_id_1}) non trouvée'}), 404
+            
+            cursor = db.execute('''
+                SELECT affectation_id FROM affectation 
+                WHERE code_smartex_ens = ? AND creneau_id = ?
+            ''', (code_ens_2, creneau_id_2))
+            if not cursor.fetchone():
+                return jsonify({'error': f'Affectation (enseignant={code_ens_2}, créneau={creneau_id_2}) non trouvée'}), 404
+        else:
+            return jsonify({
+                'error': 'Paramètres invalides. Utilisez soit (affectation_id_1, affectation_id_2) soit (code_smartex_ens_1, creneau_id_1, code_smartex_ens_2, creneau_id_2)'
+            }), 400
+        
+        # Vérifier que ce ne sont pas les mêmes enseignants
+        if code_ens_1 == code_ens_2:
+            return jsonify({'error': 'Impossible de permuter un enseignant avec lui-même'}), 400
+        
+        # Vérifier que les deux enseignants participent à la surveillance
+        cursor = db.execute('''
+            SELECT code_smartex_ens, participe_surveillance, nom_ens, prenom_ens
+            FROM enseignant 
+            WHERE code_smartex_ens IN (?, ?)
+        ''', (code_ens_1, code_ens_2))
+        enseignants = cursor.fetchall()
+        
+        if len(enseignants) != 2:
+            return jsonify({'error': 'Un ou plusieurs enseignants non trouvés'}), 404
+        
+        for ens in enseignants:
+            if not ens['participe_surveillance']:
+                return jsonify({
+                    'error': f"L'enseignant {ens['nom_ens']} {ens['prenom_ens']} ne participe pas à la surveillance"
+                }), 400
+        
+        # Vérifier les conflits d'horaire après permutation
+        # Pour l'enseignant 1 avec le créneau 2
+        cursor = db.execute('''
+            SELECT COUNT(*) as count
+            FROM affectation a1
+            JOIN creneau c1 ON a1.creneau_id = c1.creneau_id
+            JOIN creneau c2 ON c2.creneau_id = ?
+            WHERE a1.code_smartex_ens = ?
+            AND a1.creneau_id != ?
+            AND c1.dateExam = c2.dateExam
+            AND (c1.h_debut < c2.h_fin AND c1.h_fin > c2.h_debut)
+        ''', (creneau_id_2, code_ens_1, creneau_id_1))
+        
+        if cursor.fetchone()['count'] > 0:
+            return jsonify({
+                'error': 'Conflit d\'horaire: l\'enseignant 1 a déjà un créneau qui chevauche le créneau 2'
+            }), 409
+        
+        # Pour l'enseignant 2 avec le créneau 1
+        cursor = db.execute('''
+            SELECT COUNT(*) as count
+            FROM affectation a1
+            JOIN creneau c1 ON a1.creneau_id = c1.creneau_id
+            JOIN creneau c2 ON c2.creneau_id = ?
+            WHERE a1.code_smartex_ens = ?
+            AND a1.creneau_id != ?
+            AND c1.dateExam = c2.dateExam
+            AND (c1.h_debut < c2.h_fin AND c1.h_fin > c2.h_debut)
+        ''', (creneau_id_1, code_ens_2, creneau_id_2))
+        
+        if cursor.fetchone()['count'] > 0:
+            return jsonify({
+                'error': 'Conflit d\'horaire: l\'enseignant 2 a déjà un créneau qui chevauche le créneau 1'
+            }), 409
+        
+        # Effectuer la permutation
+        # Étape 1: Mettre temporairement l'enseignant 1 sur un créneau fictif (-1) pour éviter la contrainte UNIQUE
+        db.execute('''
+            UPDATE affectation 
+            SET creneau_id = -1
+            WHERE code_smartex_ens = ? AND creneau_id = ?
+        ''', (code_ens_1, creneau_id_1))
+        
+        # Étape 2: Mettre l'enseignant 2 sur le créneau 1
+        db.execute('''
+            UPDATE affectation 
+            SET code_smartex_ens = ?
+            WHERE code_smartex_ens = ? AND creneau_id = ?
+        ''', (code_ens_1, code_ens_2, creneau_id_2))
+        
+        # Étape 3: Mettre l'enseignant 2 sur le créneau 2 (celui qui était temporairement sur -1)
+        db.execute('''
+            UPDATE affectation 
+            SET code_smartex_ens = ?, creneau_id = ?
+            WHERE code_smartex_ens = ? AND creneau_id = -1
+        ''', (code_ens_2, creneau_id_2, code_ens_1))
+        
+        db.commit()
+        
+        # Récupérer les informations des enseignants pour la réponse
+        cursor = db.execute('''
+            SELECT code_smartex_ens, nom_ens, prenom_ens 
+            FROM enseignant 
+            WHERE code_smartex_ens IN (?, ?)
+        ''', (code_ens_1, code_ens_2))
+        enseignants_info = {row['code_smartex_ens']: dict(row) for row in cursor.fetchall()}
+        
+        # Récupérer les informations des créneaux
+        cursor = db.execute('''
+            SELECT creneau_id, dateExam, h_debut, h_fin, cod_salle 
+            FROM creneau 
+            WHERE creneau_id IN (?, ?)
+        ''', (creneau_id_1, creneau_id_2))
+        creneaux_info = {row['creneau_id']: dict(row) for row in cursor.fetchall()}
+        
+        return jsonify({
+            'message': 'Permutation effectuée avec succès',
+            'permutation': {
+                'enseignant_1': {
+                    **enseignants_info[code_ens_1],
+                    'ancien_creneau': creneaux_info[creneau_id_1],
+                    'nouveau_creneau': creneaux_info[creneau_id_2]
+                },
+                'enseignant_2': {
+                    **enseignants_info[code_ens_2],
+                    'ancien_creneau': creneaux_info[creneau_id_2],
+                    'nouveau_creneau': creneaux_info[creneau_id_1]
+                }
+            }
+        }), 200
+    except Exception as e:
+        db.rollback()
         return jsonify({'error': str(e)}), 500

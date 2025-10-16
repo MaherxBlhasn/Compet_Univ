@@ -81,3 +81,116 @@ def delete_grade(code_grade):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@grade_bp.route('/all', methods=['DELETE'])
+def delete_all_grades():
+    """DELETE /api/grades/all - Supprimer tous les grades"""
+    try:
+        db = get_db()
+        cursor = db.execute('DELETE FROM grade')
+        db.commit()
+        
+        return jsonify({
+            'message': f'{cursor.rowcount} grades supprimés avec succès',
+            'count': cursor.rowcount
+        }), 200
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'Impossible de supprimer: certains grades sont utilisés par des enseignants'}), 409
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@grade_bp.route('/batch', methods=['POST'])
+def create_grades_batch():
+    """POST /api/grades/batch - Créer plusieurs grades en une fois"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'grades' not in data:
+            return jsonify({'error': 'Liste de grades requise'}), 400
+        
+        grades_list = data['grades']
+        required = ['code_grade', 'quota']
+        
+        # Valider tous les grades
+        for grade in grades_list:
+            if not all(k in grade for k in required):
+                return jsonify({'error': f'Champs requis pour chaque grade: {", ".join(required)}'}), 400
+        
+        db = get_db()
+        created = []
+        errors = []
+        
+        for grade in grades_list:
+            try:
+                db.execute('INSERT INTO grade (code_grade, quota) VALUES (?, ?)',
+                          (grade['code_grade'], grade['quota']))
+                created.append(grade['code_grade'])
+            except sqlite3.IntegrityError:
+                errors.append({
+                    'grade': grade,
+                    'error': 'Ce grade existe déjà'
+                })
+            except Exception as e:
+                errors.append({
+                    'grade': grade,
+                    'error': str(e)
+                })
+        
+        db.commit()
+        
+        return jsonify({
+            'message': f'{len(created)} grades créés avec succès',
+            'created': created,
+            'errors': errors
+        }), 201 if created else 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@grade_bp.route('/batch', methods=['PUT'])
+def update_grades_batch():
+    """PUT /api/grades/batch - Modifier plusieurs grades en une fois"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'grades' not in data:
+            return jsonify({'error': 'Liste de grades requise'}), 400
+        
+        grades_list = data['grades']
+        
+        db = get_db()
+        updated = []
+        errors = []
+        
+        for grade in grades_list:
+            if 'code_grade' not in grade or 'quota' not in grade:
+                errors.append({
+                    'grade': grade,
+                    'error': 'code_grade et quota requis'
+                })
+                continue
+            
+            try:
+                cursor = db.execute('UPDATE grade SET quota = ? WHERE code_grade = ?',
+                                   (grade['quota'], grade['code_grade']))
+                if cursor.rowcount > 0:
+                    updated.append(grade['code_grade'])
+                else:
+                    errors.append({
+                        'grade': grade,
+                        'error': 'Grade non trouvé'
+                    })
+            except Exception as e:
+                errors.append({
+                    'grade': grade,
+                    'error': str(e)
+                })
+        
+        db.commit()
+        
+        return jsonify({
+            'message': f'{len(updated)} grades modifiés avec succès',
+            'updated': updated,
+            'errors': errors
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
