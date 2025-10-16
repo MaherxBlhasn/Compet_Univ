@@ -140,6 +140,7 @@ def get_max_jours_for_session(id_session):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
 @session_bp.route('/all', methods=['DELETE'])
 def delete_all_sessions():
     """DELETE /api/sessions/all - Supprimer toutes les sessions"""
@@ -264,3 +265,70 @@ def update_sessions_batch():
         }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+
+
+@session_bp.route('/<int:id_session>/check-data', methods=['GET'])
+def check_session_data(id_session):
+    """GET /api/sessions/<id>/check-data - Vérifier si la session a des enseignants, vœux et créneaux"""
+    try:
+        db = get_db()
+        
+        # Vérifier si la session existe
+        cursor = db.execute('SELECT * FROM session WHERE id_session = ?', (id_session,))
+        session = cursor.fetchone()
+        
+        if session is None:
+            return jsonify({'error': 'Session non trouvée'}), 404
+        
+        # Vérifier s'il y a des enseignants (participants)
+        cursor = db.execute('''
+            SELECT COUNT(*) as count 
+            FROM enseignant 
+            WHERE participe_surveillance = 1
+        ''')
+        enseignants_count = cursor.fetchone()['count']
+        has_enseignants = enseignants_count > 0
+        
+        # Vérifier s'il y a des vœux pour cette session
+        cursor = db.execute('''
+            SELECT COUNT(*) as count 
+            FROM voeu 
+            WHERE id_session = ?
+        ''', (id_session,))
+        voeux_count = cursor.fetchone()['count']
+        has_voeux = voeux_count > 0
+        
+        # Vérifier s'il y a des créneaux pour cette session
+        cursor = db.execute('''
+            SELECT COUNT(*) as count 
+            FROM creneau 
+            WHERE id_session = ?
+        ''', (id_session,))
+        creneaux_count = cursor.fetchone()['count']
+        has_creneaux = creneaux_count > 0
+        
+        # Déterminer si toutes les données sont présentes
+        all_data_present = has_enseignants and has_voeux and has_creneaux
+        
+        return jsonify({
+            'id_session': id_session,
+            'libelle_session': session['libelle_session'],
+            'has_enseignants': has_enseignants,
+            'has_voeux': has_voeux,
+            'has_creneaux': has_creneaux,
+            'all_data_present': all_data_present,
+            'status': 'yes' if all_data_present else 'no',
+            'details': {
+                'enseignants_count': enseignants_count,
+                'voeux_count': voeux_count,
+                'creneaux_count': creneaux_count
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+
+
