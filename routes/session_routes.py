@@ -92,3 +92,50 @@ def delete_session(id_session):
         return jsonify({'error': 'Impossible de supprimer: des créneaux/vœux sont liés à cette session'}), 409
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@session_bp.route('/max-jours', methods=['GET'])
+def get_max_jours_per_session():
+    """GET /api/sessions/max-jours - Récupérer le nombre maximum de jours pour chaque session"""
+    try:
+        db = get_db()
+        cursor = db.execute('''
+            SELECT 
+                s.id_session,
+                s.libelle_session,
+                s.date_debut,
+                s.date_fin,
+                COALESCE(MAX(js.jour_num), 0) as max_jour
+            FROM session s
+            LEFT JOIN jour_seance js ON s.id_session = js.id_session
+            GROUP BY s.id_session, s.libelle_session, s.date_debut, s.date_fin
+            ORDER BY s.date_debut DESC
+        ''')
+        sessions_max_jours = [dict(row) for row in cursor.fetchall()]
+        return jsonify(sessions_max_jours), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@session_bp.route('/<int:id_session>/max-jours', methods=['GET'])
+def get_max_jours_for_session(id_session):
+    """GET /api/sessions/<id>/max-jours - Récupérer le nombre maximum de jours pour une session spécifique"""
+    try:
+        db = get_db()
+        cursor = db.execute('''
+            SELECT 
+                s.id_session,
+                s.libelle_session,
+                s.date_debut,
+                s.date_fin,
+                COALESCE(MAX(js.jour_num), 0) as max_jour
+            FROM session s
+            LEFT JOIN jour_seance js ON s.id_session = js.id_session
+            WHERE s.id_session = ?
+            GROUP BY s.id_session, s.libelle_session, s.date_debut, s.date_fin
+        ''', (id_session,))
+        session_max_jour = cursor.fetchone()
+        
+        if session_max_jour is None:
+            return jsonify({'error': 'Session non trouvée'}), 404
+        return jsonify(dict(session_max_jour)), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
