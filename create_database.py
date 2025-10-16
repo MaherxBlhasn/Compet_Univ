@@ -241,15 +241,15 @@ def create_database():
 def insert_default_grades(cursor):
     """Insérer les grades par défaut avec leurs quotas"""
     grades = [
-        ('PR', 5),    # Pour 21 surveillances / 5 enseignants ≈ 4.2 → 5 surveillances/ens
-        ('MA', 13),   # Maintenu car déjà optimal
-        ('PTC', 7),   # Maintenu car déjà optimal
-        ('AC', 7),    # Pour 54 surveillances / 8 enseignants ≈ 6.75 → 7 surveillances/ens
-        ('VA', 11),   # Maintenu car déjà optimal
-        ('AS', 0),
-        ('EX', 0),
-        ('PES', 0),
-        ('MC', 0),
+        ('PR', 8),    # Pour 21 surveillances / 5 enseignants ≈ 4.2 → 5 surveillances/ens
+        ('MA', 12),   # Maintenu car déjà optimal
+        ('PTC', 4),   # Maintenu car déjà optimal
+        ('AC', 6),    # Pour 54 surveillances / 8 enseignants ≈ 6.75 → 7 surveillances/ens
+        ('VA', 9),   # Maintenu car déjà optimal
+        ('AS', 4),
+        ('EX', 4),
+        ('PES', 4),
+        ('MC', 4),
         ('V', 7)     # Pour 81 surveillances / 12 enseignants ≈ 6.75 → 7 surveillances/ens
     ]
     
