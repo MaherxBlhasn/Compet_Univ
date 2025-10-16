@@ -38,9 +38,7 @@ def index():
             'enseignants': '/api/enseignants',
             'creneaux': '/api/creneaux',
             'voeux': '/api/voeux',
-            'affectations': '/api/affectations',
-            'quota_enseignants': '/api/quota-enseignants',
-            'salles_par_creneau': '/api/salles-par-creneau'
+            'affectations': '/api/affectations'
         }
     })
 

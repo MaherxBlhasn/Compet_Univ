@@ -194,6 +194,7 @@ def create_database():
             diff_quota_grade INTEGER NOT NULL,
             diff_quota_majoritaire INTEGER NOT NULL,
             quota_ajuste INTEGER,
+            quota_ajuste_maj INTEGER,
             FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens),
             FOREIGN KEY (id_session) REFERENCES session(id_session),
 

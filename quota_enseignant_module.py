@@ -26,6 +26,8 @@ def create_quota_enseignant_table(conn):
             quota_majoritaire INTEGER NOT NULL,
             diff_quota_grade INTEGER NOT NULL,
             diff_quota_majoritaire INTEGER NOT NULL,
+            quota_ajuste INTEGER,
+            quota_ajuste_maj INTEGER,
             FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens),
             FOREIGN KEY (id_session) REFERENCES session(id_session),
             UNIQUE(code_smartex_ens, id_session)
@@ -126,6 +128,12 @@ def compute_quota_enseignant(affectations_df, session_id, conn):
         diff_quota_grade = quota_realise - quota_grade
         diff_quota_majoritaire = quota_realise - quota_majoritaire
         
+        # Calculer quota_ajuste (quota_grade - diff_quota_grade)
+        quota_ajuste = quota_grade - diff_quota_grade
+        
+        # Calculer quota_ajuste_maj (quota_grade - diff_quota_majoritaire)
+        quota_ajuste_maj = quota_grade - diff_quota_majoritaire
+        
         data_to_insert.append({
             'code_smartex_ens': code,
             'id_session': session_id,
@@ -134,7 +142,9 @@ def compute_quota_enseignant(affectations_df, session_id, conn):
             'quota_realise': quota_realise,
             'quota_majoritaire': quota_majoritaire,
             'diff_quota_grade': diff_quota_grade,
-            'diff_quota_majoritaire': diff_quota_majoritaire
+            'diff_quota_majoritaire': diff_quota_majoritaire,
+            'quota_ajuste': quota_ajuste,
+            'quota_ajuste_maj': quota_ajuste_maj
         })
     
     # 6. Insérer les données
@@ -142,8 +152,9 @@ def compute_quota_enseignant(affectations_df, session_id, conn):
         INSERT OR REPLACE INTO quota_enseignant (
             code_smartex_ens, id_session, grade_code_ens,
             quota_grade, quota_realise, quota_majoritaire,
-            diff_quota_grade, diff_quota_majoritaire
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            diff_quota_grade, diff_quota_majoritaire,
+            quota_ajuste, quota_ajuste_maj
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     
     for data in data_to_insert:
@@ -155,7 +166,9 @@ def compute_quota_enseignant(affectations_df, session_id, conn):
             data['quota_realise'],
             data['quota_majoritaire'],
             data['diff_quota_grade'],
-            data['diff_quota_majoritaire']
+            data['diff_quota_majoritaire'],
+            data['quota_ajuste'],
+            data['quota_ajuste_maj']
         ))
     
     print(f"✓ {len(data_to_insert)} enregistrements insérés")
