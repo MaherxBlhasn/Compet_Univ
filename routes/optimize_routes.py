@@ -9,6 +9,7 @@ from database import get_db
 import json
 import os
 import sys
+import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from optimize_example import (
@@ -18,6 +19,33 @@ from optimize_example import (
 )
 
 optimize_bp = Blueprint('optimize', __name__)
+
+
+# ===================================================================
+# UTILITY FUNCTIONS
+# ===================================================================
+
+def convert_numpy_types(obj):
+    """
+    Convertir récursivement tous les types NumPy en types Python natifs
+    pour la sérialisation JSON
+    """
+    if isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif hasattr(obj, 'item'):  # Pour tous les autres types numpy scalaires
+        return obj.item()
+    else:
+        return obj
 
 
 # ===================================================================
@@ -548,6 +576,22 @@ def run():
         files_generated = []
         stats = None
         quota_saved = False
+        infeasibility_diagnostic = None
+        
+        # If infeasible, generate diagnostic
+        if result['status'] == 'infeasible':
+            print("\n⚠️ PROBLÈME INFAISABLE - Génération du diagnostic...")
+            from infeasibility_diagnostic import diagnose_infeasibility, format_diagnostic_message
+            
+            infeasibility_diagnostic = diagnose_infeasibility(session_id, db)
+            # Convertir les types NumPy en types Python natifs pour JSON
+            infeasibility_diagnostic = convert_numpy_types(infeasibility_diagnostic)
+            diagnostic_message = format_diagnostic_message(infeasibility_diagnostic)
+            
+            print("\n" + "="*60)
+            print("DIAGNOSTIC D'INFAISABILITÉ")
+            print("="*60)
+            print(diagnostic_message)
         
         if result['status'] == 'ok' and len(result['affectations']) > 0:
             
@@ -622,14 +666,16 @@ def run():
         
         response_data = {
             'success': result['status'] == 'ok',
-            'status': result['status'],
+            'status': result.get('solver_status', result['status']),
+            'solve_time': result.get('solve_time', 0),
             'affectations': len(result['affectations']),
             'saved_to_db': saved,
             'files_generated': files_generated if generate_files else [],
             'responsable_files': nb_fichiers_responsables if generate_files else 0,
             'responsable_presences': total_presences if generate_files else 0,
             'quota_calculated': quota_saved,
-            'statistics': stats if generate_stats else None
+            'statistics': stats if generate_stats else None,
+            'infeasibility_diagnostic': infeasibility_diagnostic if result['status'] == 'infeasible' else None
         }
         
         return jsonify(response_data)

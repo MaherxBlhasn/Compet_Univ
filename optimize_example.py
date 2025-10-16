@@ -700,6 +700,8 @@ def optimize_surveillance_scheduling(
     
     return {
         'status': 'ok' if status in (cp_model.OPTIMAL, cp_model.FEASIBLE) else 'infeasible',
+        'solver_status': solver.StatusName(status),
+        'solve_time': solver.WallTime(),
         'affectations': affectations
     }
 
