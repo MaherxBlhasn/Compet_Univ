@@ -463,13 +463,15 @@ def switch_codes():
 @optimize_bp.route('/run', methods=['POST'])
 def run():
     """
-    Run optimization for a session
+    Run optimization for a session with complete processing
     
     Body:
     {
         "session_id": 1,
         "save": true,
-        "clear": true
+        "clear": true,
+        "generate_files": true,
+        "generate_stats": true
     }
     """
     db = get_db()
@@ -477,6 +479,8 @@ def run():
     session_id = data.get('session_id')
     save = data.get('save', True)
     clear = data.get('clear', True)
+    generate_files = data.get('generate_files', True)
+    generate_stats = data.get('generate_stats', True)
     
     if not session_id:
         return jsonify({
@@ -497,41 +501,149 @@ def run():
                 'error': f'Session {session_id} not found'
             }), 404
         
+        print("\n" + "="*60)
+        print(f"OPTIMISATION DE LA SESSION {session_id}")
+        print("="*60)
+        
         # Load data
+        print("\n1. Chargement des données...")
         enseignants_df, planning_df, salles_df, voeux_df, parametres_df, \
             mapping_df, salle_par_creneau_df = load_data_from_db(session_id)
         
+        # Build necessary structures for responsable presence files
+        from optimize_example import (
+            build_salle_responsable_mapping,
+            build_creneaux_from_salles,
+            map_creneaux_to_jours_seances,
+            build_teachers_dict,
+            build_voeux_set,
+            generate_responsable_presence_files,
+            save_results
+        )
+        
+        print("\n2. Construction des structures...")
+        salle_responsable = build_salle_responsable_mapping(planning_df)
+        creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df)
+        creneaux = map_creneaux_to_jours_seances(creneaux, mapping_df)
+        teachers = build_teachers_dict(enseignants_df, parametres_df)
+        voeux_set = build_voeux_set(voeux_df)
+        
+        # Generate responsable presence files
+        nb_fichiers_responsables = 0
+        total_presences = 0
+        if generate_files:
+            print("\n3. Génération des fichiers de présence obligatoire...")
+            nb_fichiers_responsables, total_presences = generate_responsable_presence_files(
+                planning_df, teachers, creneaux, mapping_df
+            )
+        
         # Run optimization
+        print("\n4. Lancement de l'optimisation...")
         result = optimize_surveillance_scheduling(
             enseignants_df, planning_df, salles_df,
             voeux_df, parametres_df, mapping_df, salle_par_creneau_df
         )
         
         saved = 0
-        if save and result['status'] == 'ok':
-            if clear:
-                db.execute(
-                    "DELETE FROM affectation WHERE id_session = ?",
-                    (session_id,)
-                )
-                db.commit()
-            
-            saved = save_results_to_db(result['affectations'], session_id)
+        files_generated = []
+        stats = None
+        quota_saved = False
         
-        return jsonify({
+        if result['status'] == 'ok' and len(result['affectations']) > 0:
+            
+            # Generate statistics
+            if generate_stats:
+                print("\n5. Génération des statistiques...")
+                from surveillance_stats import generate_statistics
+                stats = generate_statistics(
+                    result['affectations'],
+                    creneaux,
+                    teachers,
+                    voeux_set,
+                    planning_df
+                )
+            
+            # Save CSV files
+            if generate_files:
+                print("\n6. Génération des fichiers CSV...")
+                save_results(result['affectations'])
+                files_generated.append('affectations_global.csv')
+                files_generated.append('convocations individuelles')
+                files_generated.append('affectations par jour')
+            
+            # Save to database
+            if save:
+                print("\n7. Sauvegarde en base de données...")
+                if clear:
+                    db.execute(
+                        "DELETE FROM affectation WHERE id_session = ?",
+                        (session_id,)
+                    )
+                    db.commit()
+                
+                saved = save_results_to_db(result['affectations'], session_id)
+                
+                # Calculate and save quotas
+                print("\n8. Calcul des quotas...")
+                try:
+                    from quota_enseignant_module import (
+                        create_quota_enseignant_table,
+                        compute_quota_enseignant,
+                        export_quota_to_csv
+                    )
+                    import pandas as pd
+                    
+                    conn = db
+                    create_quota_enseignant_table(conn)
+                    
+                    affectations_query = """
+                        SELECT code_smartex_ens, creneau_id, id_session, position
+                        FROM affectation WHERE id_session = ?
+                    """
+                    affectations_df = pd.read_sql_query(affectations_query, conn, params=(session_id,))
+                    
+                    compute_quota_enseignant(affectations_df, session_id, conn)
+                    
+                    if generate_files:
+                        quota_output = os.path.join('results', 'quota_enseignant.csv')
+                        quota_df = export_quota_to_csv(session_id, conn, quota_output)
+                        if quota_df is not None:
+                            files_generated.append('quota_enseignant.csv')
+                            quota_saved = True
+                    
+                    conn.commit()
+                    
+                except Exception as e:
+                    print(f"Erreur calcul quotas: {e}")
+        
+        print("\n" + "="*60)
+        print("OPTIMISATION TERMINÉE")
+        print("="*60)
+        
+        response_data = {
             'success': result['status'] == 'ok',
             'status': result['status'],
             'affectations': len(result['affectations']),
-            'saved': saved,
-            'statistics': result.get('statistiques', {})
-        })
+            'saved_to_db': saved,
+            'files_generated': files_generated if generate_files else [],
+            'responsable_files': nb_fichiers_responsables if generate_files else 0,
+            'responsable_presences': total_presences if generate_files else 0,
+            'quota_calculated': quota_saved,
+            'statistics': stats if generate_stats else None
+        }
+        
+        return jsonify(response_data)
     
     except Exception as e:
         db.rollback()
+        import traceback
+        print(f"ERREUR: {e}")
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e),
-            'type': type(e).__name__
+            'type': type(e).__name__,
+            'traceback': traceback.format_exc()
         }), 500
 
 
