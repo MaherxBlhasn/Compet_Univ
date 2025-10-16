@@ -14,6 +14,8 @@ from datetime import datetime
 import pandas as pd
 from ortools.sat.python import cp_model
 from surveillance_stats import generate_statistics
+from quota_enseignant_module import create_quota_enseignant_table, compute_quota_enseignant, export_quota_to_csv
+
 
 # Configuration
 DB_NAME = 'surveillance.db'
@@ -53,7 +55,7 @@ def load_data_from_db(session_id):
     print(f"✓ {len(enseignants_df)} enseignants chargés")
     
     # 2. Charger les créneaux d'examen
-    print("\nⓘ Chargement des créneaux d'examen...")
+    print("\n📅 Chargement des créneaux d'examen...")
     planning_df = pd.read_sql_query("""
         SELECT 
             creneau_id,
@@ -77,7 +79,7 @@ def load_data_from_db(session_id):
     print(f"✓ {len(salles_df)} salles identifiées")
     
     # 4. Charger salle_par_creneau
-    print("\nⓘ Chargement de salle_par_creneau...")
+    print("\n📊 Chargement de salle_par_creneau...")
     salle_par_creneau_df = pd.read_sql_query("""
         SELECT 
             dateExam,
@@ -89,7 +91,7 @@ def load_data_from_db(session_id):
     print(f"✓ {len(salle_par_creneau_df)} entrées salle_par_creneau")
     
     # 5. Charger les vœux
-    print("\nⓘ Chargement des vœux...")
+    print("\n💬 Chargement des vœux...")
     voeux_df = pd.read_sql_query("""
         SELECT 
             code_smartex_ens,
@@ -784,7 +786,7 @@ def assign_rooms_equitable(affectations, creneaux, planning_df):
         # Affichage
         max_surv = max(surv_per_salle)
         if max_surv > 3:
-            print(f"   ⚠ {cid}: ERREUR - {max_surv} surveillants dans une salle")
+            print(f"   ⚠️ {cid}: ERREUR - {max_surv} surveillants dans une salle")
         else:
             print(f"   ✓ {cid}: {surv_per_salle} surveillants par salle")
     
@@ -833,6 +835,266 @@ def save_results(affectations):
         print(f"✓ {len(aff_df['code_smartex_ens'].unique())} convocations individuelles")
 
 
+def save_results_to_db(affectations, session_id):
+    """Sauvegarder les résultats dans la base de données"""
+    print("\n" + "="*60)
+    print("SAUVEGARDE DANS LA BASE DE DONNÉES")
+    print("="*60)
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Supprimer les anciennes affectations
+    cursor.execute("""
+        DELETE FROM affectation 
+        WHERE id_session = ?
+    """, (session_id,))
+    
+    deleted = cursor.rowcount
+    print(f"\n🗑️ {deleted} anciennes affectations supprimées")
+    
+    # Créer un mapping (date, heure, salle) -> creneau_id
+    creneaux_map = {}
+    cursor.execute("""
+        SELECT creneau_id, dateExam, h_debut, cod_salle
+        FROM creneau
+        WHERE id_session = ?
+    """, (session_id,))
+    
+    for row in cursor.fetchall():
+        key = (row['dateExam'], parse_time(row['h_debut']), row['cod_salle'])
+        creneaux_map[key] = row['creneau_id']
+    
+    print(f"📋 {len(creneaux_map)} créneaux mappés")
+    
+    nb_inserted = 0
+    nb_errors = 0
+    
+    for aff in affectations:
+        date = aff['date']
+        h_debut = aff['h_debut']
+        salle = aff.get('cod_salle')
+        code_ens = aff['code_smartex_ens']
+        jour = aff.get('jour')
+        seance = aff.get('seance')
+        h_fin = aff.get('h_fin')
+        position = aff.get('position', 'TITULAIRE')
+        
+        if not salle or pd.isna(salle):
+            nb_errors += 1
+            continue
+        
+        key = (date, h_debut, salle)
+        creneau_id = creneaux_map.get(key)
+        
+        if creneau_id is None:
+            for k, v in creneaux_map.items():
+                if k[0] == date and k[1] == h_debut:
+                    creneau_id = v
+                    break
+        
+        if creneau_id:
+            try:
+                cursor.execute("""
+                    INSERT INTO affectation (
+                        code_smartex_ens, creneau_id, id_session,
+                        jour, seance, date_examen, h_debut, h_fin, 
+                        cod_salle, position
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (code_ens, creneau_id, session_id, jour, seance, 
+                      date, h_debut, h_fin, salle, position))
+                nb_inserted += 1
+            except sqlite3.IntegrityError:
+                nb_errors += 1
+        else:
+            nb_errors += 1
+    
+    conn.commit()
+    conn.close()
+    
+    print(f"\n✅ {nb_inserted} affectations insérées dans la base")
+    if nb_errors > 0:
+        print(f"⚠️ {nb_errors} erreurs d'insertion")
+    
+    return nb_inserted
+
+
+def generate_responsable_presence_files(planning_df, teachers, creneaux, mapping_df):
+    """
+    Générer des fichiers CSV pour chaque responsable avec les créneaux où il doit être présent
+    Ces présences sont OBLIGATOIRES mais ne sont PAS des affectations de surveillance
+    """
+    print("\n" + "="*60)
+    print("GÉNÉRATION DES FICHIERS DE PRÉSENCE OBLIGATOIRE DES RESPONSABLES")
+    print("="*60)
+    
+    # Créer un dossier spécifique pour les responsables
+    responsables_folder = os.path.join(OUTPUT_FOLDER, 'presence_responsables')
+    os.makedirs(responsables_folder, exist_ok=True)
+    
+    planning_df['h_debut_parsed'] = planning_df['h_debut'].apply(parse_time)
+    
+    # Grouper par responsable
+    responsables_data = {}
+    
+    for _, row in planning_df.iterrows():
+        responsable = row['enseignant']
+        
+        if pd.isna(responsable):
+            continue
+        
+        try:
+            responsable = int(responsable)
+        except (ValueError, TypeError):
+            continue
+        
+        # Vérifier que le responsable existe dans teachers
+        if responsable not in teachers:
+            continue
+        
+        date = row['dateExam']
+        h_debut = parse_time(row['h_debut'])
+        h_fin = parse_time(row['h_fin'])
+        salle = row['cod_salle']
+        type_ex = row['type_ex']
+        semestre = row['semestre']
+        
+        # Trouver le créneau correspondant
+        creneau_id = f"{date}_{h_debut}"
+        
+        if creneau_id in creneaux:
+            cre = creneaux[creneau_id]
+            jour = cre.get('jour')
+            seance = cre.get('seance')
+        else:
+            jour = None
+            seance = None
+        
+        if responsable not in responsables_data:
+            responsables_data[responsable] = []
+        
+        responsables_data[responsable].append({
+            'code_smartex_ens': responsable,
+            'nom_ens': teachers[responsable]['nom'],
+            'prenom_ens': teachers[responsable]['prenom'],
+            'grade': teachers[responsable]['grade'],
+            'jour': jour,
+            'seance': seance,
+            'date_examen': date,
+            'h_debut': h_debut,
+            'h_fin': h_fin,
+            'salle_responsable': salle,
+            'type_examen': type_ex,
+            'semestre': semestre,
+            'statut': 'RESPONSABLE - PRÉSENCE OBLIGATOIRE',
+            'note': 'Doit être présent pour répondre aux questions (pas de surveillance dans cette salle)'
+        })
+    
+    # Générer les fichiers individuels
+    nb_fichiers = 0
+    total_presences = 0
+    
+    for resp_code, presences in responsables_data.items():
+        if not presences:
+            continue
+        
+        # Créer un DataFrame et trier par date/heure
+        resp_df = pd.DataFrame(presences)
+        resp_df['date_sort'] = pd.to_datetime(resp_df['date_examen'], format='%d/%m/%Y', errors='coerce')
+        resp_df = resp_df.sort_values(['date_sort', 'h_debut'])
+        resp_df = resp_df.drop('date_sort', axis=1)
+        
+        # Sauvegarder le fichier individuel
+        nom = teachers[resp_code]['nom']
+        prenom = teachers[resp_code]['prenom']
+        filename = f"RESPONSABLE_{nom}_{prenom}_code_{resp_code}.csv"
+        filepath = os.path.join(responsables_folder, filename)
+        
+        resp_df.to_csv(filepath, index=False, encoding='utf-8')
+        
+        nb_fichiers += 1
+        total_presences += len(presences)
+        
+        print(f"   ✓ {filename} - {len(presences)} présence(s) obligatoire(s)")
+    
+    # Générer un fichier global récapitulatif
+    if responsables_data:
+        all_presences = []
+        for presences in responsables_data.values():
+            all_presences.extend(presences)
+        
+        global_df = pd.DataFrame(all_presences)
+        global_df['date_sort'] = pd.to_datetime(global_df['date_examen'], format='%d/%m/%Y', errors='coerce')
+        global_df = global_df.sort_values(['date_sort', 'h_debut', 'nom_ens'])
+        global_df = global_df.drop('date_sort', axis=1)
+        
+        global_filepath = os.path.join(responsables_folder, 'RECAP_TOUS_RESPONSABLES.csv')
+        global_df.to_csv(global_filepath, index=False, encoding='utf-8')
+        
+        print(f"\n   ✓ RECAP_TOUS_RESPONSABLES.csv - {len(all_presences)} présences au total")
+    
+    # Générer un fichier par jour
+    if responsables_data:
+        all_presences = []
+        for presences in responsables_data.values():
+            all_presences.extend(presences)
+        
+        global_df = pd.DataFrame(all_presences)
+        
+        for jour in sorted(global_df['jour'].dropna().unique()):
+            jour_df = global_df[global_df['jour'] == jour].copy()
+            jour_df['date_sort'] = pd.to_datetime(jour_df['date_examen'], format='%d/%m/%Y', errors='coerce')
+            jour_df = jour_df.sort_values(['date_sort', 'h_debut', 'nom_ens'])
+            jour_df = jour_df.drop('date_sort', axis=1)
+            
+            jour_filepath = os.path.join(responsables_folder, f'RESPONSABLES_JOUR_{int(jour)}.csv')
+            jour_df.to_csv(jour_filepath, index=False, encoding='utf-8')
+            
+            print(f"   ✓ RESPONSABLES_JOUR_{int(jour)}.csv - {len(jour_df)} présences")
+    
+    print("\n" + "="*60)
+    print(f"✅ {nb_fichiers} fichiers de responsables générés")
+    print(f"✅ {total_presences} présences obligatoires au total")
+    print(f"📂 Dossier : {responsables_folder}")
+    print("="*60)
+    
+    # Générer aussi un document récapitulatif en texte
+    recap_filepath = os.path.join(responsables_folder, 'README_RESPONSABLES.txt')
+    with open(recap_filepath, 'w', encoding='utf-8') as f:
+        f.write("="*60 + "\n")
+        f.write("PRÉSENCES OBLIGATOIRES DES RESPONSABLES DE MATIÈRE\n")
+        f.write("="*60 + "\n\n")
+        f.write("IMPORTANT : Ces présences sont OBLIGATOIRES mais ne constituent\n")
+        f.write("PAS des affectations de surveillance.\n\n")
+        f.write("Les responsables doivent être présents aux créneaux indiqués pour\n")
+        f.write("répondre aux questions des étudiants, mais ils ne surveillent PAS\n")
+        f.write("dans la salle dont ils sont responsables.\n\n")
+        f.write("Ils seront affectés à d'autres salles du même créneau pour la\n")
+        f.write("surveillance effective.\n\n")
+        f.write("="*60 + "\n\n")
+        
+        for resp_code, presences in sorted(responsables_data.items()):
+            if presences:
+                nom = teachers[resp_code]['nom']
+                prenom = teachers[resp_code]['prenom']
+                grade = teachers[resp_code]['grade']
+                
+                f.write(f"RESPONSABLE : {nom} {prenom} (Code: {resp_code}) - Grade: {grade}\n")
+                f.write(f"Nombre de présences obligatoires : {len(presences)}\n")
+                f.write("-" * 60 + "\n")
+                
+                for p in presences:
+                    f.write(f"  • Jour {p['jour']} - {p['date_examen']} - {p['seance']} ({p['h_debut']} - {p['h_fin']})\n")
+                    f.write(f"    Salle responsable : {p['salle_responsable']} - {p['semestre']}\n")
+                
+                f.write("\n")
+    
+    print(f"📄 README généré : {recap_filepath}\n")
+    
+    return nb_fichiers, total_presences
+
+
 def main():
     """Point d'entrée principal"""
     print("\n" + "="*60)
@@ -870,18 +1132,29 @@ def main():
         traceback.print_exc()
         return
     
-    # Lancer l'optimisation
-    result = optimize_surveillance_scheduling(
-        enseignants_df, planning_df, salles_df, 
-        voeux_df, parametres_df, mapping_df, salle_par_creneau_df
-    )
-    
-    # NOUVELLES VARIABLES À RÉCUPÉRER pour les stats
+    # Construire les structures nécessaires AVANT la génération des fichiers
     salle_responsable = build_salle_responsable_mapping(planning_df)
     creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df)
     creneaux = map_creneaux_to_jours_seances(creneaux, mapping_df)
     teachers = build_teachers_dict(enseignants_df, parametres_df)
     voeux_set = build_voeux_set(voeux_df)
+    
+    # Générer les fichiers de présence des responsables
+    print("\n" + "="*60)
+    print("GÉNÉRATION DES FICHIERS DE PRÉSENCE OBLIGATOIRE")
+    print("="*60)
+    
+    nb_fichiers, total_presences = generate_responsable_presence_files(
+        planning_df, teachers, creneaux, mapping_df
+    )
+    
+    print(f"\n✅ {nb_fichiers} fichiers générés avec {total_presences} présences obligatoires")
+    
+    # Lancer l'optimisation
+    result = optimize_surveillance_scheduling(
+        enseignants_df, planning_df, salles_df, 
+        voeux_df, parametres_df, mapping_df, salle_par_creneau_df
+    )
     
     # Sauvegarder les résultats
     if result['status'] == 'ok' and len(result['affectations']) > 0:
@@ -893,6 +1166,43 @@ def main():
             planning_df
         )
         save_results(result['affectations'])
+        
+        # Sauvegarder dans la base de données
+        nb_inserted = save_results_to_db(result['affectations'], session_id)
+        
+        if nb_inserted > 0:
+            print(f"\n✅ {nb_inserted} affectations sauvegardées en base de données")
+            # CALCUL ET SAUVEGARDE DES QUOTAS
+            print("\n" + "="*60)
+            print("CALCUL DES QUOTAS PAR ENSEIGNANT")
+            print("="*60)
+            
+            try:
+                conn = get_db_connection()
+                create_quota_enseignant_table(conn)
+                
+                # Récupérer les affectations
+                affectations_query = """
+                    SELECT code_smartex_ens, creneau_id, id_session, position
+                    FROM affectation WHERE id_session = ?
+                """
+                affectations_df = pd.read_sql_query(affectations_query, conn, params=(session_id,))
+                
+                # Calculer et remplir la table
+                compute_quota_enseignant(affectations_df, session_id, conn)
+                
+                # Exporter en CSV
+                quota_output = os.path.join(OUTPUT_FOLDER, 'quota_enseignant.csv')
+                quota_df = export_quota_to_csv(session_id, conn, quota_output)
+                
+                if quota_df is not None:
+                    print(f"\n✅ Quotas exportés : {quota_output}")
+                
+                conn.commit()
+                conn.close()
+                
+            except Exception as e:
+                print(f"\n❌ Erreur lors du calcul des quotas : {e}")
     
     # Afficher le résumé final
     print("\n" + "="*60)

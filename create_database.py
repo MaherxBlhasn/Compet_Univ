@@ -180,6 +180,33 @@ def create_database():
     
     conn.commit()
     # =========================================================================
+    # TABLE: quota_enseignant 
+    # =========================================================================
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS quota_enseignant (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code_smartex_ens INTEGER NOT NULL,
+            id_session INTEGER NOT NULL,
+            grade_code_ens TEXT NOT NULL,
+            quota_grade INTEGER NOT NULL,
+            quota_realise INTEGER NOT NULL,
+            quota_majoritaire INTEGER NOT NULL,
+            diff_quota_grade INTEGER NOT NULL,
+            diff_quota_majoritaire INTEGER NOT NULL,
+            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens),
+            FOREIGN KEY (id_session) REFERENCES session(id_session),
+            UNIQUE(code_smartex_ens, id_session)
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_quota_ens
+        ON quota_enseignant(code_smartex_ens, id_session)
+    """)
+    print("✅ Table 'quota_enseignant' créée")
+
+    conn.commit()
+
+    # =========================================================================
     # TABLE: salle_par_creneau
     # =========================================================================
     cursor.execute("""
