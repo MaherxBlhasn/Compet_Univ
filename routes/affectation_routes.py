@@ -1,6 +1,18 @@
 import sqlite3
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request,send_file
 from database import get_db
+import os
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.units import cm
+from reportlab.platypus import Image as RLImage
+from reportlab.lib.styles import ParagraphStyle
+from io import BytesIO
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.pdfbase import pdfmetrics
+
 
 affectation_bp = Blueprint('affectations', __name__)
 
@@ -138,90 +150,6 @@ def create_affectation():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@affectation_bp.route('/<int:affectation_id>', methods=['PUT'])
-def update_affectation(affectation_id):
-    """PUT /api/affectations/<id> - Modifier une affectation (par ID)"""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({'error': 'Données requises'}), 400
-        
-        db = get_db()
-        
-        # Vérifier que l'affectation existe
-        cursor = db.execute('SELECT * FROM affectation WHERE affectation_id = ?', (affectation_id,))
-        affectation = cursor.fetchone()
-        
-        if not affectation:
-            return jsonify({'error': 'Affectation non trouvée'}), 404
-        
-        # Si on modifie l'enseignant, vérifier qu'il participe à la surveillance
-        if 'code_smartex_ens' in data:
-            cursor = db.execute('''
-                SELECT participe_surveillance FROM enseignant 
-                WHERE code_smartex_ens = ?
-            ''', (data['code_smartex_ens'],))
-            ens = cursor.fetchone()
-            
-            if not ens:
-                return jsonify({'error': 'Enseignant non trouvé'}), 404
-            if not ens['participe_surveillance']:
-                return jsonify({'error': 'Cet enseignant ne participe pas à la surveillance'}), 400
-        
-        # Construire la requête UPDATE dynamiquement
-        fields_to_update = []
-        params = []
-        
-        if 'code_smartex_ens' in data:
-            fields_to_update.append('code_smartex_ens = ?')
-            params.append(data['code_smartex_ens'])
-        if 'creneau_id' in data:
-            fields_to_update.append('creneau_id = ?')
-            params.append(data['creneau_id'])
-        if 'jour' in data:
-            fields_to_update.append('jour = ?')
-            params.append(data['jour'])
-        if 'seance' in data:
-            fields_to_update.append('seance = ?')
-            params.append(data['seance'])
-        if 'date_examen' in data:
-            fields_to_update.append('date_examen = ?')
-            params.append(data['date_examen'])
-        if 'h_debut' in data:
-            fields_to_update.append('h_debut = ?')
-            params.append(data['h_debut'])
-        if 'h_fin' in data:
-            fields_to_update.append('h_fin = ?')
-            params.append(data['h_fin'])
-        if 'cod_salle' in data:
-            fields_to_update.append('cod_salle = ?')
-            params.append(data['cod_salle'])
-        if 'position' in data:
-            fields_to_update.append('position = ?')
-            params.append(data['position'])
-        if 'id_session' in data:
-            fields_to_update.append('id_session = ?')
-            params.append(data['id_session'])
-        
-        if not fields_to_update:
-            return jsonify({'error': 'Aucun champ à mettre à jour'}), 400
-        
-        params.append(affectation_id)
-        query = f"UPDATE affectation SET {', '.join(fields_to_update)} WHERE affectation_id = ?"
-        
-        db.execute(query, params)
-        db.commit()
-        
-        return jsonify({'message': 'Affectation modifiée avec succès'}), 200
-    except sqlite3.IntegrityError as e:
-        if 'UNIQUE' in str(e):
-            return jsonify({'error': 'Cette affectation existe déjà'}), 409
-        if 'FOREIGN KEY' in str(e):
-            return jsonify({'error': 'Enseignant ou créneau invalide'}), 400
-        return jsonify({'error': str(e)}), 400
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @affectation_bp.route('/<int:code_smartex_ens>/<int:creneau_id>', methods=['DELETE'])
 def delete_affectation(code_smartex_ens, creneau_id):
     """DELETE /api/affectations/<code_ens>/<creneau_id> - Supprimer une affectation"""
@@ -236,161 +164,6 @@ def delete_affectation(code_smartex_ens, creneau_id):
         if cursor.rowcount == 0:
             return jsonify({'error': 'Affectation non trouvée'}), 404
         return jsonify({'message': 'Affectation supprimée avec succès'}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@affectation_bp.route('/by-id/<int:affectation_id>', methods=['DELETE'])
-def delete_affectation_by_id(affectation_id):
-    """DELETE /api/affectations/by-id/<id> - Supprimer une affectation par ID"""
-    try:
-        db = get_db()
-        cursor = db.execute('DELETE FROM affectation WHERE affectation_id = ?', (affectation_id,))
-        db.commit()
-        
-        if cursor.rowcount == 0:
-            return jsonify({'error': 'Affectation non trouvée'}), 404
-        return jsonify({'message': 'Affectation supprimée avec succès'}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@affectation_bp.route('/all', methods=['DELETE'])
-def delete_all_affectations():
-    """DELETE /api/affectations/all - Supprimer toutes les affectations"""
-    try:
-        db = get_db()
-        cursor = db.execute('DELETE FROM affectation')
-        db.commit()
-        
-        return jsonify({
-            'message': f'{cursor.rowcount} affectations supprimées avec succès',
-            'count': cursor.rowcount
-        }), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@affectation_bp.route('/session/<int:id_session>', methods=['DELETE'])
-def delete_affectations_by_session(id_session):
-    """DELETE /api/affectations/session/<id> - Supprimer toutes les affectations d'une session"""
-    try:
-        db = get_db()
-        cursor = db.execute('''
-            DELETE FROM affectation 
-            WHERE id_session = ?
-        ''', (id_session,))
-        db.commit()
-        
-        return jsonify({
-            'message': f'{cursor.rowcount} affectations supprimées avec succès',
-            'count': cursor.rowcount
-        }), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@affectation_bp.route('/batch', methods=['DELETE'])
-def delete_affectations_batch():
-    """DELETE /api/affectations/batch - Supprimer plusieurs affectations par leurs IDs"""
-    try:
-        data = request.get_json()
-        
-        if not data or 'affectation_ids' not in data:
-            return jsonify({'error': 'Liste d\'IDs d\'affectations requise'}), 400
-        
-        affectation_ids = data['affectation_ids']
-        
-        if not isinstance(affectation_ids, list) or len(affectation_ids) == 0:
-            return jsonify({'error': 'La liste d\'IDs doit être non vide'}), 400
-        
-        db = get_db()
-        placeholders = ','.join(['?' for _ in affectation_ids])
-        cursor = db.execute(f'DELETE FROM affectation WHERE affectation_id IN ({placeholders})', affectation_ids)
-        db.commit()
-        
-        return jsonify({
-            'message': f'{cursor.rowcount} affectations supprimées avec succès',
-            'count': cursor.rowcount
-        }), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@affectation_bp.route('/batch', methods=['PUT'])
-def update_affectations_batch():
-    """PUT /api/affectations/batch - Modifier plusieurs affectations en une fois"""
-    try:
-        data = request.get_json()
-        
-        if not data or 'affectations' not in data:
-            return jsonify({'error': 'Liste d\'affectations requise'}), 400
-        
-        affectations_list = data['affectations']
-        
-        db = get_db()
-        updated = []
-        errors = []
-        
-        for aff in affectations_list:
-            if 'affectation_id' not in aff:
-                errors.append({
-                    'affectation': aff,
-                    'error': 'affectation_id requis'
-                })
-                continue
-            
-            try:
-                # Construire la requête UPDATE dynamiquement
-                fields_to_update = []
-                params = []
-                
-                if 'code_smartex_ens' in aff:
-                    fields_to_update.append('code_smartex_ens = ?')
-                    params.append(aff['code_smartex_ens'])
-                if 'creneau_id' in aff:
-                    fields_to_update.append('creneau_id = ?')
-                    params.append(aff['creneau_id'])
-                if 'jour' in aff:
-                    fields_to_update.append('jour = ?')
-                    params.append(aff['jour'])
-                if 'seance' in aff:
-                    fields_to_update.append('seance = ?')
-                    params.append(aff['seance'])
-                if 'cod_salle' in aff:
-                    fields_to_update.append('cod_salle = ?')
-                    params.append(aff['cod_salle'])
-                if 'position' in aff:
-                    fields_to_update.append('position = ?')
-                    params.append(aff['position'])
-                
-                if not fields_to_update:
-                    errors.append({
-                        'affectation': aff,
-                        'error': 'Aucun champ à mettre à jour'
-                    })
-                    continue
-                
-                params.append(aff['affectation_id'])
-                query = f"UPDATE affectation SET {', '.join(fields_to_update)} WHERE affectation_id = ?"
-                
-                cursor = db.execute(query, params)
-                
-                if cursor.rowcount > 0:
-                    updated.append(aff['affectation_id'])
-                else:
-                    errors.append({
-                        'affectation': aff,
-                        'error': 'Affectation non trouvée'
-                    })
-            except Exception as e:
-                errors.append({
-                    'affectation': aff,
-                    'error': str(e)
-                })
-        
-        db.commit()
-        
-        return jsonify({
-            'message': f'{len(updated)} affectations modifiées avec succès',
-            'updated': updated,
-            'errors': errors
-        }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -691,191 +464,530 @@ def check_conflits_enseignant(code_smartex_ens):
         }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-@affectation_bp.route('/permuter', methods=['POST'])
-def permuter_enseignants():
-    """
-    POST /api/affectations/permuter - Permuter deux enseignants entre leurs créneaux
     
-    Body JSON:
-    {
-        "affectation_id_1": 123,
-        "affectation_id_2": 456
-    }
-    OU
-    {
-        "code_smartex_ens_1": 100,
-        "creneau_id_1": 50,
-        "code_smartex_ens_2": 200,
-        "creneau_id_2": 60
-    }
+    
+    
+    
+
+PDF_DIR = os.path.join("results", "convocations")
+os.makedirs(PDF_DIR, exist_ok=True)
+
+def add_footer(canvas, doc, footer_image_path):
+    """Fonction pour ajouter le footer en bas de page"""
+    canvas.saveState()
+    # Positionner l'image en bas de la page
+    footer = RLImage(footer_image_path, width=18*cm, height=1.5*cm)
+    footer.drawOn(canvas, 1.5*cm, 1*cm)  # Position x, y depuis le bas
+    canvas.restoreState()
+
+@affectation_bp.route("/generate_convocations/<int:id_session>", methods=["GET"])
+def generate_convocations(id_session):
+    try:
+        db = get_db()
+
+        # Récupérer les enseignants distincts avec leurs noms
+        cursor = db.execute("""
+            SELECT DISTINCT a.code_smartex_ens, e.nom_ens, e.prenom_ens
+            FROM affectation a
+            JOIN enseignant e ON a.code_smartex_ens = e.code_smartex_ens
+            WHERE a.id_session = ?
+        """, (id_session,))
+        enseignants = cursor.fetchall()
+
+        if not enseignants:
+            return jsonify({"message": f"Aucune affectation trouvée pour la session {id_session}"}), 404
+
+        for ens in enseignants:
+            code = ens["code_smartex_ens"]
+            nom = ens["nom_ens"]
+            prenom = ens["prenom_ens"]
+
+            # Récupérer les lignes d'affectation de cet enseignant
+            cursor.execute("""
+                SELECT date_examen, h_debut, h_fin 
+                FROM affectation 
+                WHERE id_session = ? AND code_smartex_ens = ?
+                ORDER BY date_examen, h_debut
+            """, (id_session, code))
+            rows = cursor.fetchall()
+
+            # Créer le PDF
+            pdf_path = os.path.join(PDF_DIR, f"convocation_{nom}_{prenom}_{id_session}.pdf")
+            doc = SimpleDocTemplate(pdf_path, pagesize=A4, 
+                                   leftMargin=50, rightMargin=50,
+                                   topMargin=100, bottomMargin=80)
+            styles = getSampleStyleSheet()
+            elements = []
+            logo_path="assets/logo.png"
+            # Créer l'image du logo en gardant le ratio
+            from PIL import Image as PILImage
+            img = PILImage.open(logo_path)
+            img_width, img_height = img.size
+            aspect_ratio = img_height / img_width
+            
+            desired_width = 3*cm
+            logo = RLImage(logo_path, width=desired_width, height=desired_width * aspect_ratio)
+            
+            from datetime import datetime
+            date_approbation = datetime.now().strftime("%d%m-%y")
+            
+            header_data = [
+                [logo, "GESTION DES EXAMENS ET\n\n DÉLIBÉRATIONS\n", "EXD-FR-08-01"],
+                ["", "Procédure d'exécution des épreuves", f"Date d'approbation\n{date_approbation}"],
+                ["", "Liste d'affectation des surveillants", "Page 1/1"]
+            ]
+            
+            header_table = Table(header_data, colWidths=[4*cm, 12*cm, 4*cm])
+            header_table.setStyle(TableStyle([
+                ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                ("ALIGN", (1, 0), (1, -1), "CENTER"),
+                ("ALIGN", (2, 0), (2, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("FONTNAME", (1, 0), (1, 2), "Helvetica-Bold"),
+                ("FONTSIZE", (1, 0), (1, 0), 16),
+                ("FONTSIZE", (1, 1), (1, 2), 12),
+                ("FONTSIZE", (2, 0), (2, -1), 10),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor("#003366")),
+                ("SPAN", (0, 0), (0, 2)),  # Le logo prend les 3 lignes
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(header_table)
+            elements.append(Spacer(1, 30))
+
+
+            # --- Nom enseignant ---
+            elements.append(Paragraph(f"<b>Notes à</b>", ParagraphStyle(name="centered", parent=styles["Normal"], alignment=TA_CENTER)))
+            elements.append(Spacer(1, 5))
+            elements.append(Paragraph(f"<b>Mr/Mme {prenom} {nom}</b>", ParagraphStyle(name="centered", parent=styles["Heading2"], alignment=TA_CENTER)))
+            elements.append(Spacer(1, 20))
+            # --- Texte d'intro ---
+            intro = ("Cher(e) collègue,<br/>"
+                     "Vous êtes prié(e) d'assurer la surveillance et (ou) la responsabilité des examens selon le calendrier ci-joint.")
+            elements.append(Paragraph(intro, styles["Normal"]))
+            elements.append(Spacer(1, 20))
+
+            # --- Tableau ---
+            data = [["Date", "Heure", "Durée"]]
+            for row in rows:
+                h_debut = row["h_debut"]
+                h_fin = row["h_fin"]
+
+                # Calculer la durée
+                from datetime import datetime
+                fmt = "%H:%M"
+                try:
+                    h1 = datetime.strptime(h_debut, fmt)
+                    h2 = datetime.strptime(h_fin, fmt)
+                    duration = round((h2 - h1).seconds / 3600, 1)
+                except Exception:
+                    duration = "—"
+
+                data.append([row["date_examen"], h_debut, f"{duration} H"])
+
+            table = Table(data, colWidths=[120, 120, 120])
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightblue),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ]))
+            elements.append(table)
+            elements.append(Spacer(1, 30))
+
+            footer_text = Paragraph("Merci de votre collaboration.", styles["Italic"])
+            elements.append(footer_text)
+            
+           
+            # Construire le PDF avec le footer
+            doc.build(elements, onFirstPage=lambda c, d: add_footer(c, d, "assets/footer.png"),
+                                onLaterPages=lambda c, d: add_footer(c, d, "assets/footer.png"))
+
+        cursor.close()
+        return jsonify({
+            "message": f"Convocations générées avec succès pour la session {id_session}",
+            "nombre_enseignants": len(enseignants)
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+ 
+# Créer le dossier pour les affectations
+RESULTS_DIR = 'results/affectations'
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+def format_date_fr(date_str):
+    """Convertit une date en format français"""
+    try:
+        from datetime import datetime
+        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+        return date_obj.strftime('%d/%m/%Y')
+    except:
+        return date_str
+
+def get_session_info(session_id):
+    """Récupère les informations de la session"""
+    db = get_db()
+    session = db.execute('''
+        SELECT * FROM session WHERE id_session = ?
+    ''', (session_id,)).fetchone()
+    return session
+
+def get_affectations_by_session_for_pdf(session_id):
+    """Récupère toutes les affectations groupées par date et séance"""
+    db = get_db()
+    affectations = db.execute('''
+        SELECT 
+            a.date_examen,
+            a.seance,
+            a.jour,
+            e.nom_ens || ' ' || e.prenom_ens as enseignant_nom,
+            c.cod_salle
+        FROM affectation a
+        JOIN enseignant e ON a.code_smartex_ens = e.code_smartex_ens
+        LEFT JOIN creneau c ON a.creneau_id = c.creneau_id
+        WHERE a.id_session = ?
+        ORDER BY a.date_examen, a.seance, enseignant_nom
+    ''', (session_id,)).fetchall()
+    
+    # Grouper par date et séance
+    grouped = {}
+    for row in affectations:
+        key = (row['date_examen'], row['seance'])
+        if key not in grouped:
+            grouped[key] = []
+        grouped[key].append({
+            'enseignant': row['enseignant_nom'],
+            'salle': row['cod_salle'] if row['cod_salle'] else ''
+        })
+    
+    return grouped
+
+def create_header_table():
+    """Crée l'en-tête du document sous forme de tableau"""
+    logo_path = "assets/logo.png"
+    
+    try:
+        # Créer l'image du logo en gardant le ratio
+        from PIL import Image as PILImage
+        img = PILImage.open(logo_path)
+        img_width, img_height = img.size
+        aspect_ratio = img_height / img_width
+        
+        desired_width = 3*cm
+        logo = RLImage(logo_path, width=desired_width, height=desired_width * aspect_ratio)
+    except:
+        # Si le logo n'existe pas, utiliser un texte
+        logo = Paragraph("<b>LOGO</b>", getSampleStyleSheet()['Normal'])
+    
+    from datetime import datetime
+    date_approbation = datetime.now().strftime("%d%m-%y")
+    
+    header_data = [
+        [logo, "GESTION DES EXAMENS ET\n\nDÉLIBÉRATIONS\n", "EXD-FR-08-01"],
+        ["", "Procédure d'exécution des épreuves", f"Date d'approbation\n{date_approbation}"],
+        ["", "Liste d'affectation des surveillants", "Page 1/1"]
+    ]
+    
+    header_table = Table(header_data, colWidths=[4*cm, 12*cm, 4*cm])
+    header_table.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (0, -1), "CENTER"),
+        ("ALIGN", (1, 0), (1, -1), "CENTER"),
+        ("ALIGN", (2, 0), (2, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("FONTNAME", (1, 0), (1, 2), "Helvetica-Bold"),
+        ("FONTSIZE", (1, 0), (1, 0), 14),
+        ("FONTSIZE", (1, 1), (1, 2), 11),
+        ("FONTSIZE", (2, 0), (2, -1), 10),
+        ("GRID", (0, 0), (-1, -1), 1, colors.black),
+        ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor("#003366")),
+        ("SPAN", (0, 0), (0, 2)),  # Le logo prend les 3 lignes
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    
+    return header_table
+
+def create_footer_pdf(canvas, doc):
+    """Crée le pied de page"""
+    canvas.saveState()
+    
+    # Footer avec image si disponible
+    try:
+        footer = RLImage('assets/footer.png', width=18*cm, height=1.5*cm)
+        footer.drawOn(canvas, 1.5*cm, 1*cm)
+    except:
+        # Si pas d'image, utiliser du texte
+        canvas.setFont('Helvetica', 8)
+        canvas.drawString(2*cm, 2*cm, "02 Rue Abou Raihane Bayrouni 2080 Ariana")
+        canvas.drawString(2*cm, 1.5*cm, "Tél : 71706164  Email : ISI@isi.rnu.tn")
+    
+    canvas.restoreState()
+
+def generate_affectation_pdf_file(session_id):
+    """Génère le PDF d'affectation des surveillants et l'enregistre dans results/affectations"""
+    
+    # Récupérer les données
+    session_info = get_session_info(session_id)
+    if not session_info:
+        raise ValueError("Session non trouvée")
+    
+    affectations_grouped = get_affectations_by_session_for_pdf(session_id)
+    
+    if not affectations_grouped:
+        raise ValueError("Aucune affectation trouvée pour cette session")
+    
+    # Nom du fichier
+    from datetime import datetime
+    filename = f"affectation_session_{session_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    filepath = os.path.join(RESULTS_DIR, filename)
+    
+    # Créer le document PDF
+    doc = SimpleDocTemplate(
+        filepath,
+        pagesize=A4,
+        topMargin=2*cm,
+        bottomMargin=3*cm,
+        leftMargin=2*cm,
+        rightMargin=2*cm
+    )
+    
+    # Styles
+    styles = getSampleStyleSheet()
+    
+    style_info = ParagraphStyle(
+        'Info',
+        parent=styles['Normal'],
+        fontSize=10,
+        textColor=colors.black,
+        spaceAfter=6,
+        fontName='Helvetica'
+    )
+    
+    # Liste pour stocker tous les éléments du PDF
+    elements = []
+    
+    # Générer une page par date/séance
+    sorted_keys = sorted(affectations_grouped.keys())
+    
+    for idx, (date_examen, seance) in enumerate(sorted_keys):
+        # Ajouter un saut de page avant chaque séance (sauf la première)
+        if idx > 0:
+            from reportlab.platypus import PageBreak
+            elements.append(PageBreak())
+        
+        # Ajouter l'en-tête pour cette page
+        elements.append(create_header_table())
+        elements.append(Spacer(1, 0.5*cm))
+        
+        # Informations de la session
+        style_info_centered = ParagraphStyle(
+        name="InfoCentered",
+        parent=style_info,           # hérite de ton style existant
+        alignment=TA_CENTER,         # centrage
+        fontName="Helvetica-Bold"    # gras
+        )
+
+
+        info_text = f"AU : {session_info['AU']} – Semestre : {session_info['Semestre']} – Session : {session_info['type_session']}"
+        elements.append(Paragraph(info_text, style_info_centered))
+        elements.append(Spacer(1, 0.3*cm))
+        
+        # Info date et séance
+        date_seance_text = f"Date : {format_date_fr(date_examen)} – Séance : {seance}"
+        elements.append(Paragraph(date_seance_text, style_info))
+        elements.append(Spacer(1, 0.5*cm))
+        
+        # Préparer les données du tableau
+        data = [['Enseignant', 'Salle', 'Signature']]
+        
+        for affectation in affectations_grouped[(date_examen, seance)]:
+            data.append([
+                affectation['enseignant'],
+                '',
+                ''  # Colonne signature vide
+            ])
+        
+        # Créer le tableau
+        table = Table(data, colWidths=[8*cm, 3*cm, 5*cm])
+        table.setStyle(TableStyle([
+            # En-tête
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+            
+            # Corps du tableau
+            ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+            ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+            ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('ROWHEIGHT', (0, 1), (-1, -1), 0.8*cm),
+            
+            # Grille
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        
+        elements.append(table)
+    
+    # Construction du PDF avec footer sur toutes les pages
+    def add_page_footer(canvas, doc):
+        create_footer_pdf(canvas, doc)
+    
+    doc.build(elements, onFirstPage=add_page_footer, onLaterPages=add_page_footer)
+    
+    return filepath, filename
+
+@affectation_bp.route('/pdf/<int:session_id>', methods=['GET'])
+def generate_affectation_pdf(session_id):
+    """
+    Endpoint pour générer le PDF d'affectation des surveillants
+    et l'enregistrer dans le dossier results/affectations
+    
+    Args:
+        session_id: ID de la session
+    
+    Returns:
+        JSON avec le chemin du fichier généré
     """
     try:
-        data = request.get_json()
-        if not data:
-            return jsonify({'error': 'Données requises'}), 400
-        
-        db = get_db()
-        
-        # Mode 1 : Par IDs d'affectation
-        if 'affectation_id_1' in data and 'affectation_id_2' in data:
-            affectation_id_1 = data['affectation_id_1']
-            affectation_id_2 = data['affectation_id_2']
-            
-            # Récupérer les affectations
-            cursor = db.execute('SELECT * FROM affectation WHERE affectation_id = ?', (affectation_id_1,))
-            aff1 = cursor.fetchone()
-            
-            cursor = db.execute('SELECT * FROM affectation WHERE affectation_id = ?', (affectation_id_2,))
-            aff2 = cursor.fetchone()
-            
-            if not aff1:
-                return jsonify({'error': f'Affectation {affectation_id_1} non trouvée'}), 404
-            if not aff2:
-                return jsonify({'error': f'Affectation {affectation_id_2} non trouvée'}), 404
-            
-            code_ens_1 = aff1['code_smartex_ens']
-            creneau_id_1 = aff1['creneau_id']
-            code_ens_2 = aff2['code_smartex_ens']
-            creneau_id_2 = aff2['creneau_id']
-        
-        # Mode 2 : Par codes enseignants et créneaux
-        elif all(k in data for k in ['code_smartex_ens_1', 'creneau_id_1', 'code_smartex_ens_2', 'creneau_id_2']):
-            code_ens_1 = data['code_smartex_ens_1']
-            creneau_id_1 = data['creneau_id_1']
-            code_ens_2 = data['code_smartex_ens_2']
-            creneau_id_2 = data['creneau_id_2']
-            
-            # Vérifier que les affectations existent
-            cursor = db.execute('''
-                SELECT affectation_id FROM affectation 
-                WHERE code_smartex_ens = ? AND creneau_id = ?
-            ''', (code_ens_1, creneau_id_1))
-            if not cursor.fetchone():
-                return jsonify({'error': f'Affectation (enseignant={code_ens_1}, créneau={creneau_id_1}) non trouvée'}), 404
-            
-            cursor = db.execute('''
-                SELECT affectation_id FROM affectation 
-                WHERE code_smartex_ens = ? AND creneau_id = ?
-            ''', (code_ens_2, creneau_id_2))
-            if not cursor.fetchone():
-                return jsonify({'error': f'Affectation (enseignant={code_ens_2}, créneau={creneau_id_2}) non trouvée'}), 404
-        else:
-            return jsonify({
-                'error': 'Paramètres invalides. Utilisez soit (affectation_id_1, affectation_id_2) soit (code_smartex_ens_1, creneau_id_1, code_smartex_ens_2, creneau_id_2)'
-            }), 400
-        
-        # Vérifier que ce ne sont pas les mêmes enseignants
-        if code_ens_1 == code_ens_2:
-            return jsonify({'error': 'Impossible de permuter un enseignant avec lui-même'}), 400
-        
-        # Vérifier que les deux enseignants participent à la surveillance
-        cursor = db.execute('''
-            SELECT code_smartex_ens, participe_surveillance, nom_ens, prenom_ens
-            FROM enseignant 
-            WHERE code_smartex_ens IN (?, ?)
-        ''', (code_ens_1, code_ens_2))
-        enseignants = cursor.fetchall()
-        
-        if len(enseignants) != 2:
-            return jsonify({'error': 'Un ou plusieurs enseignants non trouvés'}), 404
-        
-        for ens in enseignants:
-            if not ens['participe_surveillance']:
-                return jsonify({
-                    'error': f"L'enseignant {ens['nom_ens']} {ens['prenom_ens']} ne participe pas à la surveillance"
-                }), 400
-        
-        # Vérifier les conflits d'horaire après permutation
-        # Pour l'enseignant 1 avec le créneau 2
-        cursor = db.execute('''
-            SELECT COUNT(*) as count
-            FROM affectation a1
-            JOIN creneau c1 ON a1.creneau_id = c1.creneau_id
-            JOIN creneau c2 ON c2.creneau_id = ?
-            WHERE a1.code_smartex_ens = ?
-            AND a1.creneau_id != ?
-            AND c1.dateExam = c2.dateExam
-            AND (c1.h_debut < c2.h_fin AND c1.h_fin > c2.h_debut)
-        ''', (creneau_id_2, code_ens_1, creneau_id_1))
-        
-        if cursor.fetchone()['count'] > 0:
-            return jsonify({
-                'error': 'Conflit d\'horaire: l\'enseignant 1 a déjà un créneau qui chevauche le créneau 2'
-            }), 409
-        
-        # Pour l'enseignant 2 avec le créneau 1
-        cursor = db.execute('''
-            SELECT COUNT(*) as count
-            FROM affectation a1
-            JOIN creneau c1 ON a1.creneau_id = c1.creneau_id
-            JOIN creneau c2 ON c2.creneau_id = ?
-            WHERE a1.code_smartex_ens = ?
-            AND a1.creneau_id != ?
-            AND c1.dateExam = c2.dateExam
-            AND (c1.h_debut < c2.h_fin AND c1.h_fin > c2.h_debut)
-        ''', (creneau_id_1, code_ens_2, creneau_id_2))
-        
-        if cursor.fetchone()['count'] > 0:
-            return jsonify({
-                'error': 'Conflit d\'horaire: l\'enseignant 2 a déjà un créneau qui chevauche le créneau 1'
-            }), 409
-        
-        # Effectuer la permutation
-        # Étape 1: Mettre temporairement l'enseignant 1 sur un créneau fictif (-1) pour éviter la contrainte UNIQUE
-        db.execute('''
-            UPDATE affectation 
-            SET creneau_id = -1
-            WHERE code_smartex_ens = ? AND creneau_id = ?
-        ''', (code_ens_1, creneau_id_1))
-        
-        # Étape 2: Mettre l'enseignant 2 sur le créneau 1
-        db.execute('''
-            UPDATE affectation 
-            SET code_smartex_ens = ?
-            WHERE code_smartex_ens = ? AND creneau_id = ?
-        ''', (code_ens_1, code_ens_2, creneau_id_2))
-        
-        # Étape 3: Mettre l'enseignant 2 sur le créneau 2 (celui qui était temporairement sur -1)
-        db.execute('''
-            UPDATE affectation 
-            SET code_smartex_ens = ?, creneau_id = ?
-            WHERE code_smartex_ens = ? AND creneau_id = -1
-        ''', (code_ens_2, creneau_id_2, code_ens_1))
-        
-        db.commit()
-        
-        # Récupérer les informations des enseignants pour la réponse
-        cursor = db.execute('''
-            SELECT code_smartex_ens, nom_ens, prenom_ens 
-            FROM enseignant 
-            WHERE code_smartex_ens IN (?, ?)
-        ''', (code_ens_1, code_ens_2))
-        enseignants_info = {row['code_smartex_ens']: dict(row) for row in cursor.fetchall()}
-        
-        # Récupérer les informations des créneaux
-        cursor = db.execute('''
-            SELECT creneau_id, dateExam, h_debut, h_fin, cod_salle 
-            FROM creneau 
-            WHERE creneau_id IN (?, ?)
-        ''', (creneau_id_1, creneau_id_2))
-        creneaux_info = {row['creneau_id']: dict(row) for row in cursor.fetchall()}
+        filepath, filename = generate_affectation_pdf_file(session_id)
         
         return jsonify({
-            'message': 'Permutation effectuée avec succès',
-            'permutation': {
-                'enseignant_1': {
-                    **enseignants_info[code_ens_1],
-                    'ancien_creneau': creneaux_info[creneau_id_1],
-                    'nouveau_creneau': creneaux_info[creneau_id_2]
-                },
-                'enseignant_2': {
-                    **enseignants_info[code_ens_2],
-                    'ancien_creneau': creneaux_info[creneau_id_2],
-                    'nouveau_creneau': creneaux_info[creneau_id_1]
-                }
-            }
+            "success": True,
+            "message": "PDF généré avec succès",
+            "filepath": filepath,
+            "filename": filename,
+            "download_url": f"/api/affectations/download/{filename}"
         }), 200
+    
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e), "session_id": session_id}), 404
     except Exception as e:
-        db.rollback()
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        return jsonify({
+            "success": False, 
+            "error": f"Erreur lors de la génération du PDF: {str(e)}",
+            "traceback": traceback.format_exc()
+        }), 500
+
+@affectation_bp.route('/download/<filename>', methods=['GET'])
+def download_affectation_pdf(filename):
+    """
+    Endpoint pour télécharger un PDF d'affectation déjà généré
+    
+    Args:
+        filename: Nom du fichier PDF
+    
+    Returns:
+        PDF file
+    """
+    try:
+        filepath = os.path.join(RESULTS_DIR, filename)
+        
+        if not os.path.exists(filepath):
+            return jsonify({"error": "Fichier non trouvé"}), 404
+        
+        return send_file(
+            filepath,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=filename
+        )
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@affectation_bp.route('/list-pdfs', methods=['GET'])
+def list_affectation_pdfs():
+    """
+    Endpoint pour lister tous les PDFs d'affectation générés
+    
+    Returns:
+        JSON avec la liste des fichiers
+    """
+    try:
+        files = []
+        if os.path.exists(RESULTS_DIR):
+            for filename in os.listdir(RESULTS_DIR):
+                if filename.endswith('.pdf'):
+                    filepath = os.path.join(RESULTS_DIR, filename)
+                    from datetime import datetime
+                    file_info = {
+                        "filename": filename,
+                        "filepath": filepath,
+                        "size": os.path.getsize(filepath),
+                        "created": datetime.fromtimestamp(os.path.getctime(filepath)).strftime('%Y-%m-%d %H:%M:%S'),
+                        "download_url": f"/api/affectations/download/{filename}"
+                    }
+                    files.append(file_info)
+        
+        files.sort(key=lambda x: x['created'], reverse=True)
+        
+        return jsonify({
+            "success": True,
+            "count": len(files),
+            "files": files
+        }), 200
+    
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@affectation_bp.route('/preview/<int:session_id>', methods=['GET'])
+def preview_affectation_data(session_id):
+    """
+    Endpoint pour prévisualiser les données d'affectation (format JSON)
+    
+    Args:
+        session_id: ID de la session
+    
+    Returns:
+        JSON avec les données d'affectation
+    """
+    try:
+        session_info = get_session_info(session_id)
+        if not session_info:
+            return jsonify({"error": "Session non trouvée", "session_id": session_id}), 404
+        
+        affectations = get_affectations_by_session_for_pdf(session_id)
+        
+        result = {
+            "session": {
+                "id": session_info['id_session'],
+                "libelle": session_info['libelle_session'],
+                "AU": session_info['AU'],
+                "semestre": session_info['Semestre'],
+                "type": session_info['type_session'],
+                "date_debut": session_info['date_debut'],
+                "date_fin": session_info['date_fin']
+            },
+            "affectations": []
+        }
+        
+        for (date_examen, seance), enseignants in sorted(affectations.items()):
+            result["affectations"].append({
+                "date": date_examen,
+                "seance": seance,
+                "enseignants": enseignants
+            })
+        
+        return jsonify(result), 200
+    
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
