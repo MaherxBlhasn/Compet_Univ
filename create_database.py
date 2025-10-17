@@ -35,7 +35,10 @@ def create_database():
             id_session INTEGER PRIMARY KEY AUTOINCREMENT,
             libelle_session TEXT NOT NULL UNIQUE,
             date_debut TEXT,
-            date_fin TEXT
+            date_fin TEXT,
+            AU TEXT,
+            Semestre TEXT,
+            type_session TEXT
         )
     """)
     print("✅ Table 'session' créée")

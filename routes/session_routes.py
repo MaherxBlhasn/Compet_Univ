@@ -38,11 +38,14 @@ def create_session():
         
         db = get_db()
         cursor = db.execute('''
-            INSERT INTO session (libelle_session, date_debut, date_fin)
-            VALUES (?, ?, ?)
+            INSERT INTO session (libelle_session, date_debut, date_fin, AU, Semestre, type_session)
+            VALUES (?, ?, ?, ?, ?, ?)
         ''', (data['libelle_session'], 
               data.get('date_debut'), 
-              data.get('date_fin')))
+              data.get('date_fin'),
+              data.get('AU'),
+              data.get('Semestre'),
+              data.get('type_session')))
         db.commit()
         return jsonify({'message': 'Session créée avec succès', 'id_session': cursor.lastrowid}), 201
     except sqlite3.IntegrityError:
@@ -63,11 +66,17 @@ def update_session(id_session):
             UPDATE session 
             SET libelle_session = COALESCE(?, libelle_session),
                 date_debut = COALESCE(?, date_debut),
-                date_fin = COALESCE(?, date_fin)
+                date_fin = COALESCE(?, date_fin),
+                AU = COALESCE(?, AU),
+                Semestre = COALESCE(?, Semestre),
+                type_session = COALESCE(?, type_session)
             WHERE id_session = ?
         ''', (data.get('libelle_session'),
               data.get('date_debut'),
               data.get('date_fin'),
+              data.get('AU'),
+              data.get('Semestre'),
+              data.get('type_session'),
               id_session))
         db.commit()
         
@@ -181,11 +190,14 @@ def create_sessions_batch():
         for session in sessions_list:
             try:
                 cursor = db.execute('''
-                    INSERT INTO session (libelle_session, date_debut, date_fin)
-                    VALUES (?, ?, ?)
+                    INSERT INTO session (libelle_session, date_debut, date_fin, AU, Semestre, type_session)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 ''', (session['libelle_session'], 
                       session.get('date_debut'), 
-                      session.get('date_fin')))
+                      session.get('date_fin'),
+                      session.get('AU'),
+                      session.get('Semestre'),
+                      session.get('type_session')))
                 created_ids.append(cursor.lastrowid)
             except sqlite3.IntegrityError:
                 errors.append({
@@ -236,11 +248,17 @@ def update_sessions_batch():
                     UPDATE session 
                     SET libelle_session = COALESCE(?, libelle_session),
                         date_debut = COALESCE(?, date_debut),
-                        date_fin = COALESCE(?, date_fin)
+                        date_fin = COALESCE(?, date_fin),
+                        AU = COALESCE(?, AU),
+                        Semestre = COALESCE(?, Semestre),
+                        type_session = COALESCE(?, type_session)
                     WHERE id_session = ?
                 ''', (session.get('libelle_session'),
                       session.get('date_debut'),
                       session.get('date_fin'),
+                      session.get('AU'),
+                      session.get('Semestre'),
+                      session.get('type_session'),
                       session['id_session']))
                 
                 if cursor.rowcount > 0:
