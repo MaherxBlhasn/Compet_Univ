@@ -20,6 +20,6 @@ def init_routes(app):
     app.register_blueprint(voeu_bp, url_prefix='/api/voeux')
     app.register_blueprint(affectation_bp, url_prefix='/api/affectations')
     app.register_blueprint(upload_bp, url_prefix='/api/upload')
-    app.register_blueprint(optimize_bp, url_prefix='/api/affectations')
+    app.register_blueprint(optimize_bp, url_prefix='/api/optimize')
     app.register_blueprint(quota_enseignant_bp, url_prefix='/api/quota-enseignants')
     app.register_blueprint(salle_par_creneau_bp, url_prefix='/api/salles-par-creneau')
