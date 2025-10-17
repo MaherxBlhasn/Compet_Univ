@@ -1088,6 +1088,70 @@ def save_results(affectations):
         print(f"✓ {len(aff_df['code_smartex_ens'].unique())} convocations individuelles")
 
 
+def populate_affectation_ens_resp(session_id, cursor):
+    """
+    Peupler la table affectation_ens_resp avec :
+    - Les affectations de surveillance (de la table affectation)
+    - Les créneaux où l'enseignant est responsable (de la table creneau)
+    """
+    print("\n" + "="*60)
+    print("PEUPLEMENT DE LA TABLE AFFECTATION_ENS_RESP")
+    print("="*60)
+    
+    # Vider la table pour cette session
+    cursor.execute("""
+        DELETE FROM affectation_ens_resp
+        WHERE id_session = ?
+    """, (session_id,))
+    print(f"✓ Anciennes données supprimées pour la session {session_id}")
+    
+    # Insérer les surveillances
+    cursor.execute("""
+        INSERT INTO affectation_ens_resp 
+            (code_smartex_ens, id_session, creneau_id, date_examen, h_debut, h_fin, 
+             cod_salle, type_affectation)
+        SELECT 
+            a.code_smartex_ens,
+            a.id_session,
+            a.creneau_id,
+            a.date_examen,
+            a.h_debut,
+            a.h_fin,
+            a.cod_salle,
+            'SURVEILLANCE' as type_affectation
+        FROM affectation a
+        WHERE a.id_session = ?
+    """, (session_id,))
+    
+    nb_surveillances = cursor.rowcount
+    print(f"✓ {nb_surveillances} affectations de SURVEILLANCE insérées")
+    
+    # Insérer les responsabilités
+    cursor.execute("""
+        INSERT INTO affectation_ens_resp 
+            (code_smartex_ens, id_session, creneau_id, date_examen, h_debut, h_fin, 
+             cod_salle, type_affectation)
+        SELECT 
+            c.enseignant as code_smartex_ens,
+            c.id_session,
+            c.creneau_id,
+            c.dateExam as date_examen,
+            c.h_debut,
+            c.h_fin,
+            c.cod_salle,
+            'RESPONSABLE' as type_affectation
+        FROM creneau c
+        WHERE c.enseignant IS NOT NULL 
+          AND c.id_session = ?
+    """, (session_id,))
+    
+    nb_responsabilites = cursor.rowcount
+    print(f"✓ {nb_responsabilites} affectations de RESPONSABLE insérées")
+    
+    total = nb_surveillances + nb_responsabilites
+    print(f"✅ Total: {total} affectations dans affectation_ens_resp")
+    
+
 def save_results_to_db(affectations, session_id):
     """Sauvegarder les résultats dans la base de données"""
     print("\n" + "="*60)
@@ -1164,11 +1228,16 @@ def save_results_to_db(affectations, session_id):
             nb_errors += 1
     
     conn.commit()
-    conn.close()
     
     print(f"\n✅ {nb_inserted} affectations insérées dans la base")
     if nb_errors > 0:
         print(f"⚠️ {nb_errors} erreurs d'insertion")
+    
+    # Peupler la table affectation_ens_resp juste après
+    populate_affectation_ens_resp(session_id, cursor)
+    
+    conn.commit()
+    conn.close()
     
     return nb_inserted
 

@@ -228,8 +228,45 @@ def create_database():
     """)
     print("✅ Table 'salle_par_creneau' créée")
 
+    # =========================================================================
+    # TABLE: affectation_ens_resp
+    # =========================================================================
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS affectation_ens_resp (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code_smartex_ens INTEGER NOT NULL,
+            id_session INTEGER NOT NULL,
+            creneau_id INTEGER NOT NULL,
+            date_examen TEXT NOT NULL,
+            h_debut TEXT NOT NULL,
+            h_fin TEXT NOT NULL,
+            cod_salle TEXT,
+            type_affectation TEXT NOT NULL CHECK(type_affectation IN ('SURVEILLANCE', 'RESPONSABLE')),
+            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens),
+            FOREIGN KEY (id_session) REFERENCES session(id_session),
+            FOREIGN KEY (creneau_id) REFERENCES creneau(creneau_id)
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_affectation_ens_resp_enseignant
+        ON affectation_ens_resp(code_smartex_ens)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_affectation_ens_resp_session
+        ON affectation_ens_resp(id_session)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_affectation_ens_resp_type
+        ON affectation_ens_resp(type_affectation)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_affectation_ens_resp_date
+        ON affectation_ens_resp(date_examen, h_debut)
+    """)
+    print("✅ Table 'affectation_ens_resp' créée")
+
     print("\n✅ Base de données créée avec succès")
-    print("✅ Tables créées : grade, session, enseignant, creneau, jour_seance, voeu, affectation, salle_par_creneau")
+    print("✅ Tables créées : grade, session, enseignant, creneau, jour_seance, voeu, affectation, salle_par_creneau, affectation_ens_resp")
     
     insert_default_grades(cursor)
     
@@ -271,7 +308,7 @@ def show_database_structure():
     print("STRUCTURE DE LA BASE DE DONNÉES")
     print("="*60 + "\n")
     
-    tables = ['grade', 'session', 'enseignant', 'creneau', 'jour_seance', 'voeu', 'affectation']
+    tables = ['grade', 'session', 'enseignant', 'creneau', 'jour_seance', 'voeu', 'affectation', 'salle_par_creneau', 'affectation_ens_resp']
     
     for table in tables:
         cursor.execute(f"PRAGMA table_info({table})")
