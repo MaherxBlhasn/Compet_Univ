@@ -734,6 +734,9 @@ def import_enseignants_internal(filepath):
     # Normaliser les grades (convertir en majuscules)
     df['grade_code_ens'] = df['grade_code_ens'].apply(lambda x: str(x).strip().upper() if pd.notna(x) else None)
     
+    # Mapper VA vers V (fusion des grades Vacataire Assistant avec Vacataire)
+    df['grade_code_ens'] = df['grade_code_ens'].apply(lambda x: 'V' if x == 'VA' else x)
+    
     # Gérer participe_surveillance
     if 'participe_surveillance' in df.columns:
         df['participe_surveillance'] = df['participe_surveillance'].map({

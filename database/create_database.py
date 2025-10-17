@@ -255,7 +255,6 @@ def insert_default_grades(cursor):
         ('PES', "Professeur d'enseignement secondaire", 9),
         ('EX', 'Expert', 3),
         ('V', 'Vacataire', 4),
-        ('VA', 'Vacataire Assistant', 4)
     ]
     
     cursor.executemany("""

@@ -4,6 +4,21 @@ from database.database import get_db
 
 enseignant_bp = Blueprint('enseignants', __name__)
 
+
+def normalize_grade(grade):
+    """
+    Normalise le code grade en convertissant en majuscules et en mappant VA vers V.
+    VA (Vacataire Assistant) est fusionné avec V (Vacataire).
+    """
+    if not grade:
+        return grade
+    grade = str(grade).strip().upper()
+    # Mapper VA vers V
+    if grade == 'VA':
+        return 'V'
+    return grade
+
+
 @enseignant_bp.route('', methods=['GET'])
 def get_all_enseignants():
     """GET /api/enseignants - Récupérer tous les enseignants"""
@@ -47,13 +62,16 @@ def create_enseignant():
         if not data or not all(k in data for k in required):
             return jsonify({'error': f'Champs requis: {", ".join(required)}'}), 400
         
+        # Normaliser le grade (VA -> V)
+        grade = normalize_grade(data['grade_code_ens'])
+        
         db = get_db()
         db.execute('''
             INSERT INTO enseignant (code_smartex_ens, nom_ens, prenom_ens, 
                                    email_ens, grade_code_ens, participe_surveillance)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (data['code_smartex_ens'], data['nom_ens'], data['prenom_ens'],
-              data.get('email_ens'), data['grade_code_ens'], 
+              data.get('email_ens'), grade, 
               data.get('participe_surveillance', 1)))
         db.commit()
         return jsonify({'message': 'Enseignant créé avec succès', 
@@ -73,6 +91,9 @@ def update_enseignant(code_smartex_ens):
         if not data:
             return jsonify({'error': 'Données requises'}), 400
         
+        # Normaliser le grade si fourni (VA -> V)
+        grade = normalize_grade(data.get('grade_code_ens')) if 'grade_code_ens' in data else None
+        
         db = get_db()
         cursor = db.execute('''
             UPDATE enseignant 
@@ -83,7 +104,7 @@ def update_enseignant(code_smartex_ens):
                 participe_surveillance = COALESCE(?, participe_surveillance)
             WHERE code_smartex_ens = ?
         ''', (data.get('nom_ens'), data.get('prenom_ens'), data.get('email_ens'),
-              data.get('grade_code_ens'), data.get('participe_surveillance'),
+              grade, data.get('participe_surveillance'),
               code_smartex_ens))
         db.commit()
         
@@ -150,12 +171,15 @@ def create_enseignants_batch():
         
         for ens in enseignants_list:
             try:
+                # Normaliser le grade (VA -> V)
+                grade = normalize_grade(ens['grade_code_ens'])
+                
                 db.execute('''
                     INSERT INTO enseignant (code_smartex_ens, nom_ens, prenom_ens, 
                                            email_ens, grade_code_ens, participe_surveillance)
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (ens['code_smartex_ens'], ens['nom_ens'], ens['prenom_ens'],
-                      ens.get('email_ens'), ens['grade_code_ens'], 
+                      ens.get('email_ens'), grade, 
                       ens.get('participe_surveillance', 1)))
                 created.append(ens['code_smartex_ens'])
             except sqlite3.IntegrityError as e:
@@ -209,6 +233,9 @@ def update_enseignants_batch():
                 continue
             
             try:
+                # Normaliser le grade si fourni (VA -> V)
+                grade = normalize_grade(ens.get('grade_code_ens')) if 'grade_code_ens' in ens else None
+                
                 cursor = db.execute('''
                     UPDATE enseignant 
                     SET nom_ens = COALESCE(?, nom_ens),
@@ -218,7 +245,7 @@ def update_enseignants_batch():
                         participe_surveillance = COALESCE(?, participe_surveillance)
                     WHERE code_smartex_ens = ?
                 ''', (ens.get('nom_ens'), ens.get('prenom_ens'), ens.get('email_ens'),
-                      ens.get('grade_code_ens'), ens.get('participe_surveillance'),
+                      grade, ens.get('participe_surveillance'),
                       ens['code_smartex_ens']))
                 
                 if cursor.rowcount > 0:
