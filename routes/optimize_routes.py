@@ -536,7 +536,7 @@ def run():
         # Load data
         print("\n1. Chargement des données...")
         enseignants_df, planning_df, salles_df, voeux_df, parametres_df, \
-            mapping_df, salle_par_creneau_df = load_data_from_db(session_id)
+            mapping_df, salle_par_creneau_df, adjusted_quotas = load_data_from_db(session_id)
         
         # Build necessary structures for responsable presence files
         from optimize_example import (
@@ -545,7 +545,6 @@ def run():
             map_creneaux_to_jours_seances,
             build_teachers_dict,
             build_voeux_set,
-            generate_responsable_presence_files,
             save_results
         )
         
@@ -553,23 +552,24 @@ def run():
         salle_responsable = build_salle_responsable_mapping(planning_df)
         creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df)
         creneaux = map_creneaux_to_jours_seances(creneaux, mapping_df)
-        teachers = build_teachers_dict(enseignants_df, parametres_df)
+        teachers = build_teachers_dict(enseignants_df, parametres_df, adjusted_quotas)
         voeux_set = build_voeux_set(voeux_df)
         
-        # Generate responsable presence files
+        # Generate responsable presence files (disabled - function not available)
         nb_fichiers_responsables = 0
         total_presences = 0
-        if generate_files:
-            print("\n3. Génération des fichiers de présence obligatoire...")
-            nb_fichiers_responsables, total_presences = generate_responsable_presence_files(
-                planning_df, teachers, creneaux, mapping_df
-            )
+        # if generate_files:
+        #     print("\n3. Génération des fichiers de présence obligatoire...")
+        #     nb_fichiers_responsables, total_presences = generate_responsable_presence_files(
+        #         planning_df, teachers, creneaux, mapping_df
+        #     )
         
         # Run optimization
         print("\n4. Lancement de l'optimisation...")
         result = optimize_surveillance_scheduling(
             enseignants_df, planning_df, salles_df,
-            voeux_df, parametres_df, mapping_df, salle_par_creneau_df
+            voeux_df, parametres_df, mapping_df, salle_par_creneau_df,
+            adjusted_quotas
         )
         
         saved = 0
