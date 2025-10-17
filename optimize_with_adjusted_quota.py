@@ -316,7 +316,11 @@ def build_creneau_responsables_mapping(creneaux):
 
 
 def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df):
-    """Construire les créneaux avec calcul correct du nombre de surveillants"""
+    """
+    Construire les créneaux avec calcul correct du nombre de surveillants
+    
+    MODIFICATION : Ajout de réserves supplémentaires pour garantir la présence des responsables
+    """
     print("\n=== ÉTAPE 1 : Construction des créneaux ===")
     
     salles_df['h_debut_parsed'] = salles_df['heure_debut'].apply(parse_time)
@@ -339,12 +343,10 @@ def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_d
         key = (date, h_debut)
         nb_salles = nb_salles_map.get(key, len(group))
         
-        # FORMULE : 2 surveillants par salle + 4 réserves par créneau
-        nb_reserves = 4
-        nb_surveillants = (nb_salles * 2) + nb_reserves
-        
-        # Associer chaque salle à son responsable
+        # Associer chaque salle à son responsable et compter les responsables uniques
         salles_info = []
+        responsables_uniques = set()
+        
         for salle in group['salle'].tolist():
             key_salle = (date, h_debut, salle)
             responsable = salle_responsable.get(key_salle, None)
@@ -352,6 +354,14 @@ def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_d
                 'salle': salle,
                 'responsable': responsable
             })
+            if responsable is not None:
+                responsables_uniques.add(responsable)
+        
+        # FORMULE AMÉLIORÉE : 2 surveillants par salle + 4 réserves fixes + réserves pour responsables
+        nb_reserves_fixes = 4
+        nb_reserves_responsables = len(responsables_uniques)  # Une réserve par responsable
+        nb_reserves_total = nb_reserves_fixes + nb_reserves_responsables
+        nb_surveillants = (nb_salles * 2) + nb_reserves_total
         
         creneaux[creneau_id] = {
             'creneau_id': creneau_id,
@@ -360,12 +370,15 @@ def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_d
             'h_fin': h_fin,
             'nb_salles': nb_salles,
             'nb_surveillants': nb_surveillants,
-            'nb_reserves': nb_reserves,
+            'nb_reserves': nb_reserves_total,
+            'nb_responsables': len(responsables_uniques),
+            'responsables_uniques': list(responsables_uniques),
             'salles_info': salles_info
         }
     
     print(f"✓ {len(creneaux)} créneaux identifiés")
     print(f"✓ Total surveillants requis : {sum(c['nb_surveillants'] for c in creneaux.values())}")
+    print(f"✓ Réserves ajoutées pour responsables : {sum(c['nb_responsables'] for c in creneaux.values())}")
     
     return creneaux
 
@@ -391,6 +404,38 @@ def map_creneaux_to_jours_seances(creneaux, mapping_df):
     
     print(f"✓ {sum(1 for c in creneaux.values() if c['jour'] is not None)} créneaux mappés")
     return creneaux
+
+
+def build_responsables_par_jour_mapping(creneaux):
+    """
+    Construire un mapping responsable -> liste des jours où il a un examen
+    
+    Returns:
+        dict: {code_responsable: {jour: [list_creneaux]}}
+    """
+    print("\n=== ÉTAPE 2B : Mapping responsables par jour ===")
+    
+    responsables_par_jour = {}
+    
+    for cid, cre in creneaux.items():
+        jour = cre.get('jour')
+        if jour is None:
+            continue
+        
+        for responsable in cre.get('responsables_uniques', []):
+            if responsable not in responsables_par_jour:
+                responsables_par_jour[responsable] = {}
+            
+            if jour not in responsables_par_jour[responsable]:
+                responsables_par_jour[responsable][jour] = []
+            
+            responsables_par_jour[responsable][jour].append(cid)
+    
+    total_resp_jours = sum(len(jours) for jours in responsables_par_jour.values())
+    print(f"✓ {len(responsables_par_jour)} responsables identifiés")
+    print(f"✓ {total_resp_jours} responsable-jours au total")
+    
+    return responsables_par_jour
 
 
 def build_teachers_dict(enseignants_df, parametres_df, adjusted_quotas):
@@ -565,6 +610,7 @@ def optimize_surveillance_scheduling(
     salle_responsable = build_salle_responsable_mapping(planning_df)
     creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df)
     creneaux = map_creneaux_to_jours_seances(creneaux, mapping_df)
+    responsables_par_jour = build_responsables_par_jour_mapping(creneaux)  # NOUVEAU
     creneau_responsables = build_creneau_responsables_mapping(creneaux)
     teachers = build_teachers_dict(enseignants_df, parametres_df, adjusted_quotas)
     voeux_set = build_voeux_set(voeux_df)
@@ -699,6 +745,35 @@ def optimize_surveillance_scheduling(
     print(f"✓ H3A : {len(teacher_codes)} enseignants limités à leur quota (ajusté)")
     
     # =========================================================================
+    # CONTRAINTE HARD H4 : PRÉSENCE OBLIGATOIRE DES RESPONSABLES AU JOUR
+    # =========================================================================
+    print("\n[HARD H4] Présence obligatoire des responsables le JOUR de leur examen (pas forcément même créneau)")
+    print("         → Les responsables seront comptés dans les RÉSERVES s'ils ne sont pas titulaires")
+    
+    nb_responsables_obligatoires = 0
+    
+    for responsable, jours_dict in responsables_par_jour.items():
+        if responsable not in teacher_codes:
+            continue
+        
+        for jour, creneaux_jour in jours_dict.items():
+            # Le responsable DOIT être affecté à AU MOINS UN créneau de ce jour
+            # Collecter toutes les variables pour ce responsable ce jour-là
+            vars_jour = []
+            
+            for cid in creneau_ids:
+                if creneaux[cid]['jour'] == jour and (responsable, cid) in x:
+                    vars_jour.append(x[(responsable, cid)])
+            
+            if vars_jour:
+                # Au moins une affectation ce jour-là
+                # Cette contrainte sera satisfaite en comptant le responsable dans les réserves
+                model.Add(sum(vars_jour) >= 1)
+                nb_responsables_obligatoires += 1
+    
+    print(f"✓ H4 : {nb_responsables_obligatoires} responsable-jours avec présence obligatoire")
+    
+    # =========================================================================
     # CONTRAINTE SOFT S1 : DISPERSION DANS LA MÊME JOURNÉE
     # =========================================================================
     print("\n[SOFT S1] Dispersion des surveillances dans la même journée")
@@ -745,31 +820,9 @@ def optimize_surveillance_scheduling(
     print(f"✓ S1 : {len(dispersion_penalties)} pénalités de dispersion")
     
     # =========================================================================
-    # CONTRAINTE SOFT S2 : PRÉFÉRENCE POUR RESPONSABLES DISPONIBLES
+    # CONTRAINTE SOFT S2 : PRIORITÉ AUX QUOTAS AJUSTÉS FAIBLES
     # =========================================================================
-    print("\n[SOFT S2] Préférence pour présence responsables (contrainte souple)")
-    
-    presence_penalties = []
-    
-    for cid in creneau_ids:
-        for salle, responsable in creneau_responsables[cid].items():
-            if responsable is None or responsable not in teacher_codes:
-                continue
-            
-            if (responsable, cid) in x:
-                absence_penalty = model.NewIntVar(0, 100, f"resp_penalty_{responsable}_{cid}")
-                
-                model.Add(absence_penalty == 0).OnlyEnforceIf(x[(responsable, cid)])
-                model.Add(absence_penalty == 50).OnlyEnforceIf(x[(responsable, cid)].Not())
-                
-                presence_penalties.append(absence_penalty)
-    
-    print(f"✓ S2 : {len(presence_penalties)} pénalités de présence responsable (souple)")
-    
-    # =========================================================================
-    # NOUVEAUTÉ : CONTRAINTE SOFT S3 : PRIORITÉ AUX QUOTAS AJUSTÉS FAIBLES
-    # =========================================================================
-    print("\n[SOFT S3] Priorité pour enseignants avec quotas ajustés faibles")
+    print("\n[SOFT S2] Priorité pour enseignants avec quotas ajustés faibles")
     
     priority_penalties = []
     
@@ -797,7 +850,7 @@ def optimize_surveillance_scheduling(
             
             priority_penalties.append(penalty)
     
-    print(f"✓ S3 : {len(priority_penalties)} pénalités de priorité basées sur quotas ajustés")
+    print(f"✓ S2 : {len(priority_penalties)} pénalités de priorité basées sur quotas ajustés")
     
     # =========================================================================
     # OBJECTIF : Minimiser les écarts + pénalités
@@ -827,11 +880,7 @@ def optimize_surveillance_scheduling(
     for penalty in dispersion_penalties:
         objective_terms.append(penalty * 3)
     
-    # 3. Pénalités de présence responsable (souple)
-    for penalty in presence_penalties:
-        objective_terms.append(penalty * 2)
-    
-    # 4. NOUVEAUTÉ : Pénalités de priorité basées sur quotas ajustés
+    # 3. Pénalités de priorité basées sur quotas ajustés
     for penalty in priority_penalties:
         objective_terms.append(penalty * 15)  # Poids élevé pour favoriser l'équité
     
@@ -840,7 +889,6 @@ def optimize_surveillance_scheduling(
     print(f"✓ Objectif : minimiser {len(objective_terms)} termes")
     print(f"   - Écarts quotas : {len(teacher_codes)}")
     print(f"   - Dispersion : {len(dispersion_penalties)}")
-    print(f"   - Présence responsables : {len(presence_penalties)}")
     print(f"   - Priorités ajustées : {len(priority_penalties)}")
     
     # =========================================================================
@@ -1309,9 +1357,10 @@ def main():
     print("   [HARD H2B] ✓ Respect strict des vœux")
     print("   [HARD H2C] ✓ Responsable ne surveille pas sa propre salle")
     print("   [HARD H3A] ✓ Respect des quotas maximum (AJUSTÉS)")
+    print("   [HARD H4] ✓ Présence OBLIGATOIRE des responsables le JOUR de leur examen")
+    print("              (pas forcément le même créneau - plus flexible)")
     print("   [SOFT S1] ✓ Dispersion optimisée dans la journée")
-    print("   [SOFT S2] ✓ Préférence pour présence responsables (souple)")
-    print("   [SOFT S3] ✓ Priorité pour quotas ajustés faibles (NOUVEAU)")
+    print("   [SOFT S2] ✓ Priorité pour quotas ajustés faibles")
     print("="*60 + "\n")
 
 

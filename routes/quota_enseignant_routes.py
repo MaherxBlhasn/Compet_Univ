@@ -108,16 +108,21 @@ def create_quota():
         diff_quota_grade = data['quota_realise'] - data['quota_grade']
         diff_quota_majoritaire = data['quota_realise'] - data['quota_majoritaire']
         
+        # Calculer les quotas ajustés
+        quota_ajuste = data['quota_grade'] - diff_quota_grade
+        quota_ajuste_maj = data['quota_grade'] - diff_quota_majoritaire
+        
         db = get_db()
         cursor = db.execute('''
             INSERT INTO quota_enseignant 
             (code_smartex_ens, id_session, grade_code_ens, quota_grade, 
              quota_realise, quota_majoritaire, diff_quota_grade, 
-             diff_quota_majoritaire, quota_ajuste)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             diff_quota_majoritaire, quota_ajuste, quota_ajuste_maj)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (data['code_smartex_ens'], data['id_session'], data['grade_code_ens'],
               data['quota_grade'], data['quota_realise'], data['quota_majoritaire'],
-              diff_quota_grade, diff_quota_majoritaire, data.get('quota_ajuste')))
+              diff_quota_grade, diff_quota_majoritaire, data.get('quota_ajuste', quota_ajuste), 
+              data.get('quota_ajuste_maj', quota_ajuste_maj)))
         db.commit()
         
         return jsonify({
@@ -159,6 +164,10 @@ def update_quota(quota_id):
         diff_quota_grade = quota_realise - quota_grade
         diff_quota_majoritaire = quota_realise - quota_majoritaire
         
+        # Calculer les quotas ajustés
+        quota_ajuste = quota_grade - diff_quota_grade
+        quota_ajuste_maj = quota_grade - diff_quota_majoritaire
+        
         cursor = db.execute('''
             UPDATE quota_enseignant 
             SET code_smartex_ens = COALESCE(?, code_smartex_ens),
@@ -169,12 +178,13 @@ def update_quota(quota_id):
                 quota_majoritaire = ?,
                 diff_quota_grade = ?,
                 diff_quota_majoritaire = ?,
-                quota_ajuste = COALESCE(?, quota_ajuste)
+                quota_ajuste = COALESCE(?, quota_ajuste),
+                quota_ajuste_maj = COALESCE(?, quota_ajuste_maj)
             WHERE id = ?
         ''', (data.get('code_smartex_ens'), data.get('id_session'), 
               data.get('grade_code_ens'), quota_grade, quota_realise,
               quota_majoritaire, diff_quota_grade, diff_quota_majoritaire,
-              data.get('quota_ajuste'), quota_id))
+              data.get('quota_ajuste', quota_ajuste), data.get('quota_ajuste_maj', quota_ajuste_maj), quota_id))
         db.commit()
         
         return jsonify({'message': 'Quota modifié avec succès'}), 200
@@ -318,15 +328,20 @@ def create_quotas_batch():
                 diff_quota_grade = quota['quota_realise'] - quota['quota_grade']
                 diff_quota_majoritaire = quota['quota_realise'] - quota['quota_majoritaire']
                 
+                # Calculer les quotas ajustés
+                quota_ajuste = quota['quota_grade'] - diff_quota_grade
+                quota_ajuste_maj = quota['quota_grade'] - diff_quota_majoritaire
+                
                 cursor = db.execute('''
                     INSERT INTO quota_enseignant 
                     (code_smartex_ens, id_session, grade_code_ens, quota_grade, 
                      quota_realise, quota_majoritaire, diff_quota_grade, 
-                     diff_quota_majoritaire, quota_ajuste)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     diff_quota_majoritaire, quota_ajuste, quota_ajuste_maj)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (quota['code_smartex_ens'], quota['id_session'], quota['grade_code_ens'],
                       quota['quota_grade'], quota['quota_realise'], quota['quota_majoritaire'],
-                      diff_quota_grade, diff_quota_majoritaire, quota.get('quota_ajuste')))
+                      diff_quota_grade, diff_quota_majoritaire, quota.get('quota_ajuste', quota_ajuste),
+                      quota.get('quota_ajuste_maj', quota_ajuste_maj)))
                 created_ids.append(cursor.lastrowid)
             except sqlite3.IntegrityError as e:
                 if 'UNIQUE' in str(e):
@@ -399,6 +414,10 @@ def update_quotas_batch():
                 diff_quota_grade = quota_realise - quota_grade
                 diff_quota_majoritaire = quota_realise - quota_majoritaire
                 
+                # Calculer les quotas ajustés
+                quota_ajuste = quota_grade - diff_quota_grade
+                quota_ajuste_maj = quota_grade - diff_quota_majoritaire
+                
                 cursor = db.execute('''
                     UPDATE quota_enseignant 
                     SET code_smartex_ens = COALESCE(?, code_smartex_ens),
@@ -409,12 +428,13 @@ def update_quotas_batch():
                         quota_majoritaire = ?,
                         diff_quota_grade = ?,
                         diff_quota_majoritaire = ?,
-                        quota_ajuste = COALESCE(?, quota_ajuste)
+                        quota_ajuste = COALESCE(?, quota_ajuste),
+                        quota_ajuste_maj = COALESCE(?, quota_ajuste_maj)
                     WHERE id = ?
                 ''', (quota.get('code_smartex_ens'), quota.get('id_session'), 
                       quota.get('grade_code_ens'), quota_grade, quota_realise,
                       quota_majoritaire, diff_quota_grade, diff_quota_majoritaire,
-                      quota.get('quota_ajuste'), quota['id']))
+                      quota.get('quota_ajuste', quota_ajuste), quota.get('quota_ajuste_maj', quota_ajuste_maj), quota['id']))
                 
                 updated.append(quota['id'])
             except Exception as e:

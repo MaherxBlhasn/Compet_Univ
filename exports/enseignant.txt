@@ -123,4 +123,3 @@ code_smartex_ens,nom_ens,prenom_ens,email_ens,grade_code_ens,participe_surveilla
 401,Boubakri,Marouene,marouane.boubakri@isi.utm.tn,VA,1
 450,Med Amine,Guesmi,guesmi.amine@isi.utm.tn,V,1
 451,Ouali,Sami,sami.ouali@isi.utm.tn,MA,1
-452,Ouali,Sami,sami.ouali@isi.utm.tn,MA,1
