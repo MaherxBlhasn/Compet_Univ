@@ -175,10 +175,10 @@ class SurveillanceStatistics:
         
         responsables_assignes = 0
         for (date, h_debut, salle), resp_code in salle_responsable.items():
+            # Vérifier si le responsable est présent LE JOUR de son examen (pas seulement au même créneau)
             matching = self.aff[
                 (self.aff['code_smartex_ens'] == resp_code) &
-                (self.aff['date'] == date) &
-                (self.aff['h_debut'] == h_debut)
+                (self.aff['date'] == date)
             ]
             
             if len(matching) > 0:
@@ -188,7 +188,7 @@ class SurveillanceStatistics:
         taux = (responsables_assignes / total_resp * 100) if total_resp > 0 else 0
         
         print(f"    Responsabilités à couvrir : {total_resp} (participe_surveillance=1)")
-        print(f"    Responsables présents : {responsables_assignes} ({taux:.1f}%)")
+        print(f"    Responsables présents le jour de l'examen : {responsables_assignes} ({taux:.1f}%)")
         print(f"    Responsables absents : {total_resp - responsables_assignes} ({100-taux:.1f}%)")
         
         return {
@@ -326,7 +326,7 @@ class SurveillanceStatistics:
         print(f"\n✓ VOEUX         : {voeux['taux_respect']:5.1f}% ({voeux['respectes']}/{voeux['total']})")
         print(f"✓ DISPERSION    : {disp['espacees']:3d} prof espacées / "
               f"{disp['consecutives']:3d} consécutives")
-        print(f"✓ RESPONSABLES  : {resp['taux_presence']:5.1f}% présents "
+        print(f"✓ RESPONSABLES  : {resp['taux_presence']:5.1f}% présents le jour de l'examen "
               f"({resp['presents']}/{resp['total']} avec participe=1)")
         print(f"✓ ÉQUITÉ        : {equite['taux_equite']:5.1f}% "
               f"({equite['grades_equitables']}/{equite['total_grades']} grades)")
