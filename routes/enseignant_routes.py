@@ -1,6 +1,6 @@
 import sqlite3
 from flask import Blueprint, jsonify, request
-from database import get_db
+from database.database import get_db
 
 enseignant_bp = Blueprint('enseignants', __name__)
 

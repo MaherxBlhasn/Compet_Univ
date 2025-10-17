@@ -1,6 +1,6 @@
 import sqlite3
 from flask import Blueprint, jsonify, request
-from database import get_db
+from database.database import get_db
 
 salle_par_creneau_bp = Blueprint('salles_par_creneau', __name__)
 

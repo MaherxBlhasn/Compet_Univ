@@ -1,6 +1,6 @@
 from flask import Flask, jsonify
 from config import Config
-from database import init_db
+from database.database import init_db
 from routes import init_routes
 import os
 
@@ -59,7 +59,7 @@ if __name__ == '__main__':
     # Créer la base de données si elle n'existe pas
     if not os.path.exists(Config.DB_NAME):
         print("⚠️  Base de données non trouvée, création...")
-        from create_database import create_database
+        from database.create_database import create_database
         create_database()
     
     print("\n" + "="*60)

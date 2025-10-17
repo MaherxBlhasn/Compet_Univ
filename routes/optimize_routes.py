@@ -5,14 +5,14 @@ API simplifiée en anglais
 """
 
 from flask import Blueprint, request, jsonify
-from database import get_db
+from database.database import get_db
 import json
 import os
 import sys
 import numpy as np
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from optimize_example import (
+from scripts.optimize_example import (
     optimize_surveillance_scheduling,
     load_data_from_db,
     save_results_to_db
@@ -539,7 +539,7 @@ def run():
             mapping_df, salle_par_creneau_df, adjusted_quotas = load_data_from_db(session_id)
         
         # Build necessary structures for responsable presence files
-        from optimize_example import (
+        from scripts.optimize_example import (
             build_salle_responsable_mapping,
             build_creneaux_from_salles,
             map_creneaux_to_jours_seances,
@@ -581,7 +581,7 @@ def run():
         # If infeasible, generate diagnostic
         if result['status'] == 'infeasible':
             print("\n⚠️ PROBLÈME INFAISABLE - Génération du diagnostic...")
-            from infeasibility_diagnostic import diagnose_infeasibility, format_diagnostic_message
+            from scripts.infeasibility_diagnostic import diagnose_infeasibility, format_diagnostic_message
             
             infeasibility_diagnostic = diagnose_infeasibility(session_id, db)
             # Convertir les types NumPy en types Python natifs pour JSON
@@ -598,7 +598,7 @@ def run():
             # Generate statistics
             if generate_stats:
                 print("\n5. Génération des statistiques...")
-                from surveillance_stats import generate_statistics
+                from scripts.surveillance_stats import generate_statistics
                 stats = generate_statistics(
                     result['affectations'],
                     creneaux,
@@ -630,7 +630,7 @@ def run():
                 # Calculate and save quotas
                 print("\n8. Calcul des quotas...")
                 try:
-                    from quota_enseignant_module import (
+                    from scripts.quota_enseignant_module import (
                         create_quota_enseignant_table,
                         compute_quota_enseignant,
                         export_quota_to_csv

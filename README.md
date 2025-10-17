@@ -42,32 +42,52 @@ pip install -r requirements.txt
 ## Structure du projet
 
 ```
-├── app.py                  # Application principale
-├── config.py              # Configuration du projet
-├── create_database.py     # Script de création de la base de données
-├── database.py            # Gestion de la base de données
-├── optimize_example.py    # Algorithme d'optimisation
-├── requirements.txt       # Dépendances Python
-└── routes/               # Routes de l'application
-    ├── affectation_routes.py
-    ├── creneau_routes.py
-    ├── enseignant_routes.py
-    ├── grade_routes.py
-    ├── session_routes.py
-    ├── upload_routes.py
-    └── voeu_routes.py
+├── app.py                    # Application Flask principale
+├── config.py                 # Configuration du projet
+├── requirements.txt          # Dépendances Python
+├── database/                 # Modules de base de données
+│   ├── create_database.py    # Création de la base de données
+│   └── database.py           # Connexion et initialisation
+├── routes/                   # Routes API Flask
+│   ├── affectation_routes.py
+│   ├── creneau_routes.py
+│   ├── enseignant_routes.py
+│   ├── grade_routes.py
+│   ├── optimize_routes.py
+│   ├── quota_enseignant_routes.py
+│   ├── salle_par_creneau_routes.py
+│   ├── session_routes.py
+│   ├── upload_routes.py
+│   └── voeu_routes.py
+├── scripts/                  # Scripts utilitaires
+│   ├── optimize_example.py   # Algorithme d'optimisation CP-SAT
+│   ├── generate_jour_seance.py
+│   ├── check_quotas.py
+│   ├── check_tables.py
+│   ├── diagnostic.py
+│   ├── infeasibility_diagnostic.py
+│   ├── surveillance_stats.py
+│   └── quota_enseignant_module.py
+├── exports/                  # Scripts d'export
+│   └── export_tables_to_csv.py
+├── deprecated/               # Fichiers obsolètes
+├── results/                  # Résultats d'optimisation (CSV)
+├── uploads/                  # Fichiers uploadés
+├── tests/                    # Tests unitaires
+└── assets/                   # Ressources statiques
 ```
 
 ## Utilisation
 
-1. Initialisez la base de données :
+1. Lancez l'application Flask :
 ```bash
-python create_database.py
+python app.py
 ```
+L'application créera automatiquement la base de données si elle n'existe pas.
 
-2. Lancez l'optimisation des surveillances :
+2. Pour lancer l'optimisation manuellement :
 ```bash
-python optimize_example.py
+python scripts/optimize_example.py
 ```
 
 3. Les résultats seront générés dans le dossier `results/` sous forme de fichiers CSV :

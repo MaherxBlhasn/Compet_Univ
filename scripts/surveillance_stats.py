@@ -150,7 +150,7 @@ class SurveillanceStatistics:
         }
     
     def _compute_responsable_stats(self):
-        """Analyser la disponibilité des responsables"""
+        """Analyser la disponibilité des responsables (uniquement ceux avec participe_surveillance=1)"""
         print("\n[3] RESPONSABLES DE SALLES")
         
         planning_df_copy = self.planning_df.copy()
@@ -166,8 +166,10 @@ class SurveillanceStatistics:
             if pd.notna(date) and pd.notna(h_debut) and pd.notna(salle) and pd.notna(responsable):
                 try:
                     responsable = int(responsable)
-                    key = (date, h_debut, salle)
-                    salle_responsable[key] = responsable
+                    # Vérifier que le responsable participe aux surveillances
+                    if responsable in self.teachers and self.teachers[responsable]['participe']:
+                        key = (date, h_debut, salle)
+                        salle_responsable[key] = responsable
                 except (ValueError, TypeError):
                     continue
         
@@ -185,7 +187,7 @@ class SurveillanceStatistics:
         total_resp = len(salle_responsable)
         taux = (responsables_assignes / total_resp * 100) if total_resp > 0 else 0
         
-        print(f"    Responsabilités à couvrir : {total_resp}")
+        print(f"    Responsabilités à couvrir : {total_resp} (participe_surveillance=1)")
         print(f"    Responsables présents : {responsables_assignes} ({taux:.1f}%)")
         print(f"    Responsables absents : {total_resp - responsables_assignes} ({100-taux:.1f}%)")
         
@@ -239,35 +241,40 @@ class SurveillanceStatistics:
         }
     
     def _compute_couverture_stats(self):
-        """Analyser la couverture des creneaux"""
+        """Analyser la couverture des créneaux - toutes les salles doivent avoir minimum 2 surveillants"""
         print("\n[5] COUVERTURE DES CRENEAUX")
         
-        couverts = 0
-        deficitaires = 0
+        # Regrouper les affectations par créneau et salle
+        couverture_par_salle = defaultdict(lambda: defaultdict(int))
         
-        for cid, cre in self.creneaux.items():
-            if cre['jour'] is None:
-                continue
-            
-            count = len(self.aff[self.aff['creneau_id'] == cid])
-            required = cre['nb_surveillants']
-            
-            if count == required:
-                couverts += 1
-            elif count < required:
-                deficitaires += 1
+        for _, aff in self.aff.iterrows():
+            cid = aff.get('creneau_id')
+            salle = aff.get('cod_salle')  # Utiliser 'cod_salle' au lieu de 'salle'
+            if pd.notna(cid) and pd.notna(salle):
+                couverture_par_salle[cid][salle] += 1
         
-        total = sum(1 for c in self.creneaux.values() if c['jour'] is not None)
-        taux = (couverts / total * 100) if total > 0 else 0
+        total_salles = 0
+        salles_bien_couvertes = 0  # >= 2 surveillants
+        salles_sous_couvertes = 0  # < 2 surveillants
         
-        print(f"    Creneaux totaux : {total}")
-        print(f"    Couverts exactement : {couverts} ({taux:.1f}%)")
-        print(f"    Déficitaires : {deficitaires}")
+        for cid in couverture_par_salle:
+            for salle, nb_surveillants in couverture_par_salle[cid].items():
+                total_salles += 1
+                if nb_surveillants >= 2:
+                    salles_bien_couvertes += 1
+                else:
+                    salles_sous_couvertes += 1
+        
+        taux = (salles_bien_couvertes / total_salles * 100) if total_salles > 0 else 0
+        
+        print(f"    Salles totales : {total_salles}")
+        print(f"    Salles avec >= 2 surveillants : {salles_bien_couvertes} ({taux:.1f}%)")
+        print(f"    Salles avec < 2 surveillants : {salles_sous_couvertes}")
         
         return {
-            'total': total,
-            'couverts': couverts,
-            'deficitaires': deficitaires,
+            'total': total_salles,
+            'bien_couvertes': salles_bien_couvertes,
+            'sous_couvertes': salles_sous_couvertes,
             'taux_couverture': taux
         }
     
@@ -320,11 +327,11 @@ class SurveillanceStatistics:
         print(f"✓ DISPERSION    : {disp['espacees']:3d} prof espacées / "
               f"{disp['consecutives']:3d} consécutives")
         print(f"✓ RESPONSABLES  : {resp['taux_presence']:5.1f}% présents "
-              f"({resp['presents']}/{resp['total']})")
+              f"({resp['presents']}/{resp['total']} avec participe=1)")
         print(f"✓ ÉQUITÉ        : {equite['taux_equite']:5.1f}% "
               f"({equite['grades_equitables']}/{equite['total_grades']} grades)")
         print(f"✓ COUVERTURE    : {couv['taux_couverture']:5.1f}% "
-              f"({couv['couverts']}/{couv['total']} creneaux)")
+              f"({couv['bien_couvertes']}/{couv['total']} salles avec >=2 surveillants)")
         
         print("\n" + "="*70 + "\n")
 

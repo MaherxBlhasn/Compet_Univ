@@ -12,13 +12,18 @@ NOUVEAUTÉ :
 """
 
 import os
+import sys
 import json
 import sqlite3
 from datetime import datetime
 import pandas as pd
 from ortools.sat.python import cp_model
-from surveillance_stats import generate_statistics
-from quota_enseignant_module import create_quota_enseignant_table, compute_quota_enseignant, export_quota_to_csv
+
+# Ajouter le dossier parent au path pour les imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from scripts.surveillance_stats import generate_statistics
+from scripts.quota_enseignant_module import create_quota_enseignant_table, compute_quota_enseignant, export_quota_to_csv
 
 
 # Configuration

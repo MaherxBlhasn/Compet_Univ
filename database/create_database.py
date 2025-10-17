@@ -22,6 +22,7 @@ def create_database():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS grade (
             code_grade TEXT PRIMARY KEY,
+            grade TEXT NOT NULL,
             quota INTEGER NOT NULL
         )
     """)
@@ -243,23 +244,23 @@ def create_database():
 
 
 def insert_default_grades(cursor):
-    """Insérer les grades par défaut avec leurs quotas"""
+    """Insérer les grades par défaut avec leurs quotas selon l'image fournie"""
     grades = [
-        ('PR', 8),    # Pour 21 surveillances / 5 enseignants ≈ 4.2 → 5 surveillances/ens
-        ('MA', 12),   # Maintenu car déjà optimal
-        ('PTC', 4),   # Maintenu car déjà optimal
-        ('AC', 6),    # Pour 54 surveillances / 8 enseignants ≈ 6.75 → 7 surveillances/ens
-        ('VA', 9),   # Maintenu car déjà optimal
-        ('AS', 4),
-        ('EX', 4),
-        ('PES', 4),
-        ('MC', 4),
-        ('V', 7)     # Pour 81 surveillances / 12 enseignants ≈ 6.75 → 7 surveillances/ens
+        ('PR', 'Professeur', 4),
+        ('MC', 'Maître de conférences', 4),
+        ('MA', 'Maître Assistant', 7),
+        ('AS', 'Assistant', 8),
+        ('AC', 'Assistant Contractuel', 9),
+        ('PTC', 'Professeur Tronc Commun', 9),
+        ('PES', "Professeur d'enseignement secondaire", 9),
+        ('EX', 'Expert', 3),
+        ('V', 'Vacataire', 4),
+        ('VA', 'Vacataire Assistant', 1)
     ]
     
     cursor.executemany("""
-        INSERT OR IGNORE INTO grade (code_grade, quota)
-        VALUES (?, ?)
+        INSERT OR IGNORE INTO grade (code_grade, grade, quota)
+        VALUES (?, ?, ?)
     """, grades)
     
     print(f"✅ {len(grades)} grades insérés par défaut")

@@ -8,7 +8,7 @@ from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
 import pandas as pd
 import os
-from database import get_db
+from database.database import get_db
 import logging
 
 upload_bp = Blueprint('upload', __name__)
