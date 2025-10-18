@@ -9,6 +9,7 @@ from werkzeug.utils import secure_filename
 import pandas as pd
 import os
 from database.database import get_db
+from utils.time_utils import parse_time, determine_seance_from_time
 import logging
 
 upload_bp = Blueprint('upload', __name__)
@@ -47,42 +48,6 @@ def read_file(filepath):
     except Exception as e:
         logger.error(f"Erreur lecture fichier {filepath}: {str(e)}")
         raise
-
-def parse_time(time_str):
-    """Extrait l'heure d'un timestamp"""
-    if pd.isna(time_str):
-        return None
-    time_str = str(time_str)
-    if ' ' in time_str:
-        return time_str.split(' ')[1][:5]
-    return time_str[:5]
-
-
-def determine_seance_from_time(time_str):
-    """Détermine S1, S2, S3 ou S4 selon l'heure"""
-    if pd.isna(time_str):
-        return None
-    
-    time_str = str(time_str)
-    if ' ' in time_str:
-        time_part = time_str.split(' ')[1]
-    else:
-        time_part = time_str
-    
-    try:
-        hour = int(time_part.split(':')[0])
-        if 8 <= hour < 10:
-            return 'S1'
-        elif 10 <= hour < 12:
-            return 'S2'
-        elif 12 <= hour < 14:
-            return 'S3'
-        elif 14 <= hour < 17:
-            return 'S4'
-    except:
-        pass
-    return None
-
 
 def generate_jour_seance_from_creneaux(session_id):
     """Remplit automatiquement les tables jour_seance et salle_par_creneau"""
@@ -839,12 +804,16 @@ def import_creneaux_internal(filepath, id_session):
     
     for idx, row in df.iterrows():
         try:
+            # Normaliser les heures au format HH:MM
+            h_debut_normalized = parse_time(row['h_debut'])
+            h_fin_normalized = parse_time(row['h_fin'])
+            
             db.execute('''
                 INSERT INTO creneau 
                 (id_session, dateExam, h_debut, h_fin, type_ex, 
                  semestre, enseignant, cod_salle)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (id_session, row['dateExam'], row['h_debut'], row['h_fin'],
+            ''', (id_session, row['dateExam'], h_debut_normalized, h_fin_normalized,
                   row.get('type_ex'), row.get('semestre'), 
                   row.get('enseignant'), row.get('cod_salle')))
             inserted += 1

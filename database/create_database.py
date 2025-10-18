@@ -55,7 +55,7 @@ def create_database():
             email_ens TEXT,
             grade_code_ens TEXT NOT NULL,
             participe_surveillance BOOLEAN NOT NULL DEFAULT 1,
-            FOREIGN KEY (grade_code_ens) REFERENCES grade(code_grade)
+            FOREIGN KEY (grade_code_ens) REFERENCES grade(code_grade) ON DELETE CASCADE
         )
     """)
     cursor.execute("""
@@ -78,8 +78,8 @@ def create_database():
             semestre TEXT,
             enseignant INTEGER,
             cod_salle TEXT,
-            FOREIGN KEY (id_session) REFERENCES session(id_session),
-            FOREIGN KEY (enseignant) REFERENCES enseignant(code_smartex_ens)
+            FOREIGN KEY (id_session) REFERENCES session(id_session) ON DELETE CASCADE,
+            FOREIGN KEY (enseignant) REFERENCES enseignant(code_smartex_ens) ON DELETE SET NULL
         )
     """)
     cursor.execute("""
@@ -104,7 +104,7 @@ def create_database():
             seance_code TEXT NOT NULL,
             heure_debut TEXT NOT NULL,
             heure_fin TEXT NOT NULL,
-            FOREIGN KEY (id_session) REFERENCES session(id_session),
+            FOREIGN KEY (id_session) REFERENCES session(id_session) ON DELETE CASCADE,
             UNIQUE(id_session, jour_num, date_examen, seance_code)
         )
     """)
@@ -128,8 +128,8 @@ def create_database():
             id_session INTEGER NOT NULL,
             jour INTEGER NOT NULL,
             seance TEXT NOT NULL,
-            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens),
-            FOREIGN KEY (id_session) REFERENCES session(id_session)
+            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens) ON DELETE CASCADE,
+            FOREIGN KEY (id_session) REFERENCES session(id_session) ON DELETE CASCADE
         )
     """)
     cursor.execute("""
@@ -158,9 +158,9 @@ def create_database():
             h_fin TEXT,
             cod_salle TEXT,
             position TEXT,
-            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens),
-            FOREIGN KEY (creneau_id) REFERENCES creneau(creneau_id),
-            FOREIGN KEY (id_session) REFERENCES session(id_session),
+            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens) ON DELETE CASCADE,
+            FOREIGN KEY (creneau_id) REFERENCES creneau(creneau_id) ON DELETE CASCADE,
+            FOREIGN KEY (id_session) REFERENCES session(id_session) ON DELETE CASCADE,
             UNIQUE(code_smartex_ens, creneau_id, cod_salle)
         )
     """)
@@ -199,8 +199,8 @@ def create_database():
             diff_quota_majoritaire INTEGER NOT NULL,
             quota_ajuste INTEGER,
             quota_ajuste_maj INTEGER,
-            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens),
-            FOREIGN KEY (id_session) REFERENCES session(id_session),
+            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens) ON DELETE CASCADE,
+            FOREIGN KEY (id_session) REFERENCES session(id_session) ON DELETE CASCADE,
 
             UNIQUE(code_smartex_ens, id_session)
         )
@@ -223,7 +223,7 @@ def create_database():
             h_debut TEXT NOT NULL,
             nb_salle INTEGER NOT NULL,
             PRIMARY KEY (id_session, dateExam, h_debut),
-            FOREIGN KEY (id_session) REFERENCES session(id_session)
+            FOREIGN KEY (id_session) REFERENCES session(id_session) ON DELETE CASCADE
         )
     """)
     cursor.execute("""
@@ -244,8 +244,8 @@ def create_database():
             prenom TEXT NOT NULL,
             participe_surveillance INTEGER NOT NULL,
             nbre_creneaux INTEGER NOT NULL,
-            FOREIGN KEY (id_session) REFERENCES session(id_session),
-            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens)
+            FOREIGN KEY (id_session) REFERENCES session(id_session) ON DELETE CASCADE,
+            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens) ON DELETE CASCADE
         )
     """)
     print("✅ Table 'responsable_absent_jour_examen' créée")

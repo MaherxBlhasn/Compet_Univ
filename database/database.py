@@ -7,6 +7,8 @@ def get_db():
     if 'db' not in g:
         g.db = sqlite3.connect(Config.DB_NAME)
         g.db.row_factory = sqlite3.Row  # Permet d'accéder aux colonnes par nom
+        # IMPORTANT : Activer les contraintes de clés étrangères (nécessaire pour ON DELETE CASCADE)
+        g.db.execute("PRAGMA foreign_keys = ON")
     return g.db
 
 def close_db(e=None):

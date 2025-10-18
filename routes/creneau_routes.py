@@ -1,6 +1,7 @@
 import sqlite3
 from flask import Blueprint, jsonify, request
 from database.database import get_db
+from utils.time_utils import parse_time
 
 creneau_bp = Blueprint('creneaux', __name__)
 
@@ -90,13 +91,20 @@ def create_creneau():
         if not data or not all(k in data for k in required):
             return jsonify({'error': f'Champs requis: {", ".join(required)}'}), 400
         
+        # Normaliser les heures au format HH:MM
+        h_debut_normalized = parse_time(data['h_debut'])
+        h_fin_normalized = parse_time(data['h_fin'])
+        
+        if not h_debut_normalized or not h_fin_normalized:
+            return jsonify({'error': 'Format d\'heure invalide (attendu: HH:MM)'}), 400
+        
         db = get_db()
         cursor = db.execute('''
             INSERT INTO creneau (id_session, dateExam, h_debut, h_fin, 
                                 type_ex, semestre, enseignant, cod_salle)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (data['id_session'], data['dateExam'], data['h_debut'], 
-              data['h_fin'], data.get('type_ex'), data.get('semestre'),
+        ''', (data['id_session'], data['dateExam'], h_debut_normalized, 
+              h_fin_normalized, data.get('type_ex'), data.get('semestre'),
               data.get('enseignant'), data.get('cod_salle')))
         db.commit()
         
@@ -119,6 +127,16 @@ def update_creneau(creneau_id):
         if not data:
             return jsonify({'error': 'Données requises'}), 400
         
+        # Normaliser les heures si elles sont fournies
+        h_debut_normalized = parse_time(data['h_debut']) if 'h_debut' in data else None
+        h_fin_normalized = parse_time(data['h_fin']) if 'h_fin' in data else None
+        
+        # Vérifier que les heures sont valides si fournies
+        if 'h_debut' in data and not h_debut_normalized:
+            return jsonify({'error': 'Format d\'heure de début invalide (attendu: HH:MM)'}), 400
+        if 'h_fin' in data and not h_fin_normalized:
+            return jsonify({'error': 'Format d\'heure de fin invalide (attendu: HH:MM)'}), 400
+        
         db = get_db()
         cursor = db.execute('''
             UPDATE creneau 
@@ -132,7 +150,7 @@ def update_creneau(creneau_id):
                 cod_salle = COALESCE(?, cod_salle)
             WHERE creneau_id = ?
         ''', (data.get('id_session'), data.get('dateExam'), 
-              data.get('h_debut'), data.get('h_fin'),
+              h_debut_normalized, h_fin_normalized,
               data.get('type_ex'), data.get('semestre'),
               data.get('enseignant'), data.get('cod_salle'),
               creneau_id))
@@ -220,12 +238,23 @@ def create_creneaux_batch():
         
         for creneau in creneaux_list:
             try:
+                # Normaliser les heures au format HH:MM
+                h_debut_normalized = parse_time(creneau['h_debut'])
+                h_fin_normalized = parse_time(creneau['h_fin'])
+                
+                if not h_debut_normalized or not h_fin_normalized:
+                    errors.append({
+                        'creneau': creneau,
+                        'error': 'Format d\'heure invalide (attendu: HH:MM)'
+                    })
+                    continue
+                
                 cursor = db.execute('''
                     INSERT INTO creneau (id_session, dateExam, h_debut, h_fin, 
                                         type_ex, semestre, enseignant, cod_salle)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (creneau['id_session'], creneau['dateExam'], creneau['h_debut'], 
-                      creneau['h_fin'], creneau.get('type_ex'), creneau.get('semestre'),
+                ''', (creneau['id_session'], creneau['dateExam'], h_debut_normalized, 
+                      h_fin_normalized, creneau.get('type_ex'), creneau.get('semestre'),
                       creneau.get('enseignant'), creneau.get('cod_salle')))
                 created_ids.append(cursor.lastrowid)
             except sqlite3.IntegrityError as e:
@@ -273,6 +302,24 @@ def update_creneaux_batch():
                 continue
             
             try:
+                # Normaliser les heures si elles sont fournies
+                h_debut_normalized = parse_time(creneau['h_debut']) if 'h_debut' in creneau else None
+                h_fin_normalized = parse_time(creneau['h_fin']) if 'h_fin' in creneau else None
+                
+                # Vérifier que les heures sont valides si fournies
+                if 'h_debut' in creneau and not h_debut_normalized:
+                    errors.append({
+                        'creneau': creneau,
+                        'error': 'Format d\'heure de début invalide (attendu: HH:MM)'
+                    })
+                    continue
+                if 'h_fin' in creneau and not h_fin_normalized:
+                    errors.append({
+                        'creneau': creneau,
+                        'error': 'Format d\'heure de fin invalide (attendu: HH:MM)'
+                    })
+                    continue
+                
                 cursor = db.execute('''
                     UPDATE creneau 
                     SET id_session = COALESCE(?, id_session),
@@ -285,7 +332,7 @@ def update_creneaux_batch():
                         cod_salle = COALESCE(?, cod_salle)
                     WHERE creneau_id = ?
                 ''', (creneau.get('id_session'), creneau.get('dateExam'), 
-                      creneau.get('h_debut'), creneau.get('h_fin'),
+                      h_debut_normalized, h_fin_normalized,
                       creneau.get('type_ex'), creneau.get('semestre'),
                       creneau.get('enseignant'), creneau.get('cod_salle'),
                       creneau['creneau_id']))
