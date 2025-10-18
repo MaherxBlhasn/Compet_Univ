@@ -155,20 +155,15 @@ def create_affectation():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@affectation_bp.route('/<int:code_smartex_ens>/<int:creneau_id>', methods=['DELETE'])
-def delete_affectation(code_smartex_ens, creneau_id):
-    """DELETE /api/affectations/<code_ens>/<creneau_id> - Supprimer une affectation"""
+
+@affectation_bp.route('/delete-all', methods=['DELETE'])
+def delete_all_affectations():
+    """DELETE /api/affectations/delete-all - Supprimer toutes les affectations"""
     try:
         db = get_db()
-        cursor = db.execute('''
-            DELETE FROM affectation 
-            WHERE code_smartex_ens = ? AND creneau_id = ?
-        ''', (code_smartex_ens, creneau_id))
+        cursor = db.execute('DELETE FROM affectation')
         db.commit()
-        
-        if cursor.rowcount == 0:
-            return jsonify({'error': 'Affectation non trouvée'}), 404
-        return jsonify({'message': 'Affectation supprimée avec succès'}), 200
+        return jsonify({'message': 'Toutes les affectations ont été supprimées.'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
