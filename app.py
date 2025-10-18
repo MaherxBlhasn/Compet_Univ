@@ -38,7 +38,9 @@ def index():
             'enseignants': '/api/enseignants',
             'creneaux': '/api/creneaux',
             'voeux': '/api/voeux',
-            'affectations': '/api/affectations'
+            'affectations': '/api/affectations',
+            'statistics': '/api/statistics/session/<id_session>',
+            'statistics_all': '/api/statistics/sessions'
         }
     })
 
