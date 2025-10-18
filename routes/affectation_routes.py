@@ -1,6 +1,6 @@
 import sqlite3
 from flask import Blueprint, jsonify, request,send_file
-from database.database import get_db
+from database.database import get_db, remplir_responsables_absents
 import os
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -135,6 +135,11 @@ def create_affectation():
             VALUES (?, ?)
         ''', (data['code_smartex_ens'], data['creneau_id']))
         db.commit()
+        # Récupérer l'id_session du créneau
+        cursor = db.execute('SELECT id_session FROM creneau WHERE creneau_id = ?', (data['creneau_id'],))
+        creneau = cursor.fetchone()
+        if creneau:
+            remplir_responsables_absents(creneau['id_session'])
         
         return jsonify({
             'message': 'Affectation créée avec succès',
@@ -991,3 +996,68 @@ def preview_affectation_data(session_id):
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
+
+@affectation_bp.route('/permuter', methods=['POST'])
+def permuter_affectations():
+    """
+    Permuter deux affectations (swap)
+    Body: { affectation_id_1, affectation_id_2 }
+    """
+    try:
+        data = request.get_json()
+        id1 = data.get('affectation_id_1')
+        id2 = data.get('affectation_id_2')
+        if not id1 or not id2:
+            return jsonify({'error': 'Les deux IDs d’affectation sont requis.'}), 400
+        db = get_db()
+        # Récupérer les deux affectations
+        aff1 = db.execute('''
+            SELECT a.*, c.cod_salle, c.dateExam, c.h_debut, c.h_fin
+            FROM affectation a
+            JOIN creneau c ON a.creneau_id = c.creneau_id
+            WHERE a.rowid = ?
+        ''', (id1,)).fetchone()
+        aff2 = db.execute('''
+            SELECT a.*, c.cod_salle, c.dateExam, c.h_debut, c.h_fin
+            FROM affectation a
+            JOIN creneau c ON a.creneau_id = c.creneau_id
+            WHERE a.rowid = ?
+        ''', (id2,)).fetchone()
+        if not aff1 or not aff2:
+            return jsonify({'error': 'Affectation(s) non trouvée(s).'}), 404
+        # Vérifier que les deux affectations sont dans la même session
+        if aff1['id_session'] != aff2['id_session']:
+            return jsonify({'error': 'Impossible de permuter : les deux affectations ne sont pas dans la même session.'}), 400
+        # Vérifier même salle et même créneau
+        if aff1['cod_salle'] == aff2['cod_salle'] and aff1['dateExam'] == aff2['dateExam'] and aff1['h_debut'] == aff2['h_debut'] and aff1['h_fin'] == aff2['h_fin']:
+            return jsonify({'error': 'Impossible de permuter : même salle et même créneau.'}), 400
+        # Vérifier participation à la surveillance
+        for aff in [aff1, aff2]:
+            ens = db.execute('SELECT participe_surveillance FROM enseignant WHERE code_smartex_ens = ?', (aff['code_smartex_ens'],)).fetchone()
+            if not ens or not ens['participe_surveillance']:
+                return jsonify({'error': f"L'enseignant {aff['code_smartex_ens']} ne participe pas à la surveillance."}), 400
+        # Vérifier conflits d’horaire pour chaque permutation
+        def has_conflict(code_smartex_ens, creneau_id):
+            return db.execute('''
+                SELECT COUNT(*) as count
+                FROM affectation a1
+                JOIN creneau c1 ON a1.creneau_id = c1.creneau_id
+                JOIN creneau c2 ON c2.creneau_id = ?
+                WHERE a1.code_smartex_ens = ?
+                AND c1.dateExam = c2.dateExam
+                AND ((c1.h_debut < c2.h_fin AND c1.h_fin > c2.h_debut))
+                AND a1.creneau_id != ?
+            ''', (creneau_id, code_smartex_ens, creneau_id)).fetchone()['count'] > 0
+        # Vérifier pour aff1 dans le créneau de aff2
+        if has_conflict(aff1['code_smartex_ens'], aff2['creneau_id']):
+            return jsonify({'error': 'Conflit d’horaire pour le premier enseignant.'}), 409
+        # Vérifier pour aff2 dans le créneau de aff1
+        if has_conflict(aff2['code_smartex_ens'], aff1['creneau_id']):
+            return jsonify({'error': 'Conflit d’horaire pour le second enseignant.'}), 409
+        # Effectuer la permutation
+        db.execute('UPDATE affectation SET code_smartex_ens = ? WHERE rowid = ?', (aff2['code_smartex_ens'], id1))
+        db.execute('UPDATE affectation SET code_smartex_ens = ? WHERE rowid = ?', (aff1['code_smartex_ens'], id2))
+        db.commit()
+        return jsonify({'message': 'Permutation effectuée avec succès.'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

@@ -232,6 +232,29 @@ def create_database():
     """)
     print("✅ Table 'salle_par_creneau' créée")
 
+    # =========================================================================
+    # TABLE: responsable_absent_jour_examen
+    # =========================================================================
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS responsable_absent_jour_examen (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_session INTEGER NOT NULL,
+            code_smartex_ens TEXT NOT NULL,
+            nom TEXT NOT NULL,
+            prenom TEXT NOT NULL,
+            participe_surveillance INTEGER NOT NULL,
+            date_exam TEXT NOT NULL,
+            h_debut TEXT NOT NULL,
+            h_fin TEXT NOT NULL,
+            cod_salle TEXT,
+            creneau_id INTEGER NOT NULL,
+            FOREIGN KEY (id_session) REFERENCES session(id_session),
+            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens),
+            FOREIGN KEY (creneau_id) REFERENCES creneau(creneau_id)
+        )
+    """)
+    print("✅ Table 'responsable_absent_jour_examen' créée")
+
     print("\n✅ Base de données créée avec succès")
     print("✅ Tables créées : grade, session, enseignant, creneau, jour_seance, voeu, affectation, salle_par_creneau")
     
