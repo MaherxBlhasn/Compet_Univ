@@ -30,7 +30,7 @@ def get_all_affectations():
         query = '''
             SELECT a.*, 
                    e.nom_ens, e.prenom_ens, e.grade_code_ens,
-                   c.dateExam, c.h_debut, c.h_fin, c.cod_salle, c.type_ex,
+                   c.dateExam, c.h_debut, c.h_fin, c.cod_salle, c.type_ex, c.enseignant,
                    s.libelle_session,
                    g.quota
             FROM affectation a
@@ -72,7 +72,7 @@ def get_affectation(code_smartex_ens, creneau_id):
         cursor = db.execute('''
             SELECT a.*, 
                    e.nom_ens, e.prenom_ens, e.grade_code_ens,
-                   c.dateExam, c.h_debut, c.h_fin, c.cod_salle, c.type_ex,
+                   c.dateExam, c.h_debut, c.h_fin, c.cod_salle, c.type_ex, c.enseignant,
                    s.libelle_session,
                    g.quota
             FROM affectation a
@@ -175,7 +175,7 @@ def get_affectations_enseignant(code_smartex_ens):
         db = get_db()
         cursor = db.execute('''
             SELECT a.*, 
-                   c.dateExam, c.h_debut, c.h_fin, c.cod_salle, c.type_ex,
+                   c.dateExam, c.h_debut, c.h_fin, c.cod_salle, c.type_ex, c.enseignant,
                    s.libelle_session, s.id_session
             FROM affectation a
             JOIN creneau c ON a.creneau_id = c.creneau_id
@@ -209,9 +209,11 @@ def get_affectations_creneau(creneau_id):
         cursor = db.execute('''
             SELECT a.*, 
                    e.nom_ens, e.prenom_ens, e.email_ens, e.grade_code_ens,
+                   c.enseignant,
                    g.quota
             FROM affectation a
             JOIN enseignant e ON a.code_smartex_ens = e.code_smartex_ens
+            JOIN creneau c ON a.creneau_id = c.creneau_id
             LEFT JOIN grade g ON e.grade_code_ens = g.code_grade
             WHERE a.creneau_id = ?
             ORDER BY e.nom_ens, e.prenom_ens
@@ -1021,13 +1023,13 @@ def permuter_affectations():
         db = get_db()
         # Récupérer les deux affectations
         aff1 = db.execute('''
-            SELECT a.*, c.cod_salle, c.dateExam, c.h_debut, c.h_fin
+            SELECT a.*, c.cod_salle, c.dateExam, c.h_debut, c.h_fin, c.enseignant
             FROM affectation a
             JOIN creneau c ON a.creneau_id = c.creneau_id
             WHERE a.rowid = ?
         ''', (id1,)).fetchone()
         aff2 = db.execute('''
-            SELECT a.*, c.cod_salle, c.dateExam, c.h_debut, c.h_fin
+            SELECT a.*, c.cod_salle, c.dateExam, c.h_debut, c.h_fin, c.enseignant
             FROM affectation a
             JOIN creneau c ON a.creneau_id = c.creneau_id
             WHERE a.rowid = ?
