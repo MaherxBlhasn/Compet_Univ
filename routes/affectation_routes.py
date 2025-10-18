@@ -1028,8 +1028,13 @@ def permuter_affectations():
         # Vérifier que les deux affectations sont dans la même session
         if aff1['id_session'] != aff2['id_session']:
             return jsonify({'error': 'Impossible de permuter : les deux affectations ne sont pas dans la même session.'}), 400
-        # Vérifier même salle et même créneau
-        if aff1['cod_salle'] == aff2['cod_salle'] and aff1['dateExam'] == aff2['dateExam'] and aff1['h_debut'] == aff2['h_debut'] and aff1['h_fin'] == aff2['h_fin']:
+        # Refuser uniquement si salle ET créneau identiques
+        if (
+            aff1['cod_salle'] == aff2['cod_salle'] and
+            aff1['dateExam'] == aff2['dateExam'] and
+            aff1['h_debut'] == aff2['h_debut'] and
+            aff1['h_fin'] == aff2['h_fin']
+        ):
             return jsonify({'error': 'Impossible de permuter : même salle et même créneau.'}), 400
         # Vérifier participation à la surveillance
         for aff in [aff1, aff2]:
@@ -1037,8 +1042,9 @@ def permuter_affectations():
             if not ens or not ens['participe_surveillance']:
                 return jsonify({'error': f"L'enseignant {aff['code_smartex_ens']} ne participe pas à la surveillance."}), 400
         # Vérifier conflits d’horaire pour chaque permutation
-        def has_conflict(code_smartex_ens, creneau_id):
-            return db.execute('''
+        def has_conflict(code_smartex_ens, creneau_id, exclude_ids):
+            placeholders = ','.join(['?'] * len(exclude_ids))
+            query = f'''
                 SELECT COUNT(*) as count
                 FROM affectation a1
                 JOIN creneau c1 ON a1.creneau_id = c1.creneau_id
@@ -1046,13 +1052,15 @@ def permuter_affectations():
                 WHERE a1.code_smartex_ens = ?
                 AND c1.dateExam = c2.dateExam
                 AND ((c1.h_debut < c2.h_fin AND c1.h_fin > c2.h_debut))
-                AND a1.creneau_id != ?
-            ''', (creneau_id, code_smartex_ens, creneau_id)).fetchone()['count'] > 0
+                AND a1.rowid NOT IN ({placeholders})
+            '''
+            params = [creneau_id, code_smartex_ens] + exclude_ids
+            return db.execute(query, params).fetchone()['count'] > 0
         # Vérifier pour aff1 dans le créneau de aff2
-        if has_conflict(aff1['code_smartex_ens'], aff2['creneau_id']):
+        if has_conflict(aff1['code_smartex_ens'], aff2['creneau_id'], [id1, id2]):
             return jsonify({'error': 'Conflit d’horaire pour le premier enseignant.'}), 409
         # Vérifier pour aff2 dans le créneau de aff1
-        if has_conflict(aff2['code_smartex_ens'], aff1['creneau_id']):
+        if has_conflict(aff2['code_smartex_ens'], aff1['creneau_id'], [id1, id2]):
             return jsonify({'error': 'Conflit d’horaire pour le second enseignant.'}), 409
         # Effectuer la permutation
         db.execute('UPDATE affectation SET code_smartex_ens = ? WHERE rowid = ?', (aff2['code_smartex_ens'], id1))
