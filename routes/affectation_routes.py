@@ -470,7 +470,6 @@ def check_conflits_enseignant(code_smartex_ens):
     
 
 PDF_DIR = os.path.join("results", "convocations")
-os.makedirs(PDF_DIR, exist_ok=True)
 
 def add_footer(canvas, doc, footer_image_path):
     """Fonction pour ajouter le footer en bas de page"""
@@ -483,6 +482,10 @@ def add_footer(canvas, doc, footer_image_path):
 @affectation_bp.route("/generate_convocations/<int:id_session>", methods=["GET"])
 def generate_convocations(id_session):
     try:
+        # Créer le dossier convocations pour cette session s'il n'existe pas
+        session_pdf_dir = os.path.join(PDF_DIR, f"session_{id_session}")
+        os.makedirs(session_pdf_dir, exist_ok=True)
+        
         db = get_db()
 
         # Récupérer les enseignants distincts avec leurs noms
@@ -511,8 +514,8 @@ def generate_convocations(id_session):
             """, (id_session, code))
             rows = cursor.fetchall()
 
-            # Créer le PDF
-            pdf_path = os.path.join(PDF_DIR, f"convocation_{nom}_{prenom}_{id_session}.pdf")
+            # Créer le PDF dans le dossier de la session
+            pdf_path = os.path.join(session_pdf_dir, f"convocation_{nom}_{prenom}_{id_session}.pdf")
             doc = SimpleDocTemplate(pdf_path, pagesize=A4, 
                                    leftMargin=50, rightMargin=50,
                                    topMargin=100, bottomMargin=80)
@@ -619,7 +622,6 @@ def generate_convocations(id_session):
  
 # Créer le dossier pour les affectations
 RESULTS_DIR = 'results/affectations'
-os.makedirs(RESULTS_DIR, exist_ok=True)
 
 def format_date_fr(date_str):
     """Convertit une date en format français"""
@@ -732,7 +734,11 @@ def create_footer_pdf(canvas, doc):
     canvas.restoreState()
 
 def generate_affectation_pdf_file(session_id):
-    """Génère le PDF d'affectation des surveillants et l'enregistre dans results/affectations"""
+    """Génère le PDF d'affectation des surveillants et l'enregistre dans results/affectations/session_{id}"""
+    
+    # Créer le dossier affectations pour cette session s'il n'existe pas
+    session_results_dir = os.path.join(RESULTS_DIR, f"session_{session_id}")
+    os.makedirs(session_results_dir, exist_ok=True)
     
     # Récupérer les données
     session_info = get_session_info(session_id)
@@ -747,7 +753,7 @@ def generate_affectation_pdf_file(session_id):
     # Nom du fichier
     from datetime import datetime
     filename = f"affectation_session_{session_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-    filepath = os.path.join(RESULTS_DIR, filename)
+    filepath = os.path.join(session_results_dir, filename)
     
     # Créer le document PDF
     doc = SimpleDocTemplate(
@@ -883,13 +889,13 @@ def generate_affectation_pdf(session_id):
             "traceback": traceback.format_exc()
         }), 500
 
-@affectation_bp.route('/download/<filename>', methods=['GET'])
+@affectation_bp.route('/download/<path:filename>', methods=['GET'])
 def download_affectation_pdf(filename):
     """
     Endpoint pour télécharger un PDF d'affectation déjà généré
     
     Args:
-        filename: Nom du fichier PDF
+        filename: Chemin du fichier PDF (peut inclure session_X/fichier.pdf)
     
     Returns:
         PDF file
@@ -900,11 +906,14 @@ def download_affectation_pdf(filename):
         if not os.path.exists(filepath):
             return jsonify({"error": "Fichier non trouvé"}), 404
         
+        # Extraire juste le nom du fichier pour le téléchargement
+        actual_filename = os.path.basename(filepath)
+        
         return send_file(
             filepath,
             mimetype='application/pdf',
             as_attachment=True,
-            download_name=filename
+            download_name=actual_filename
         )
     
     except Exception as e:
@@ -921,18 +930,22 @@ def list_affectation_pdfs():
     try:
         files = []
         if os.path.exists(RESULTS_DIR):
-            for filename in os.listdir(RESULTS_DIR):
-                if filename.endswith('.pdf'):
-                    filepath = os.path.join(RESULTS_DIR, filename)
-                    from datetime import datetime
-                    file_info = {
-                        "filename": filename,
-                        "filepath": filepath,
-                        "size": os.path.getsize(filepath),
-                        "created": datetime.fromtimestamp(os.path.getctime(filepath)).strftime('%Y-%m-%d %H:%M:%S'),
-                        "download_url": f"/api/affectations/download/{filename}"
-                    }
-                    files.append(file_info)
+            # Parcourir les sous-dossiers session_*
+            for session_folder in os.listdir(RESULTS_DIR):
+                session_path = os.path.join(RESULTS_DIR, session_folder)
+                if os.path.isdir(session_path) and session_folder.startswith('session_'):
+                    for filename in os.listdir(session_path):
+                        if filename.endswith('.pdf'):
+                            filepath = os.path.join(session_path, filename)
+                            from datetime import datetime
+                            file_info = {
+                                "filename": filename,
+                                "filepath": filepath,
+                                "size": os.path.getsize(filepath),
+                                "created": datetime.fromtimestamp(os.path.getctime(filepath)).strftime('%Y-%m-%d %H:%M:%S'),
+                                "download_url": f"/api/affectations/download/{session_folder}/{filename}"
+                            }
+                            files.append(file_info)
         
         files.sort(key=lambda x: x['created'], reverse=True)
         

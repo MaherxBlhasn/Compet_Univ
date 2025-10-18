@@ -29,6 +29,7 @@ from scripts.quota_enseignant_module import create_quota_enseignant_table, compu
 # Configuration
 DB_NAME = 'surveillance.db'
 OUTPUT_FOLDER = 'results'
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 
 def get_db_connection():
@@ -1013,55 +1014,34 @@ def save_results(affectations):
     print("\n=== SAUVEGARDE DES RÉSULTATS ===")
     
     aff_df = pd.DataFrame(affectations)
-    if aff_df.empty:
-        return
-
-    # Récupérer l'id_session depuis les affectations
-    session_id = aff_df['jour'].min()  # Si id_session n'est pas dans affectations, à adapter
-    # Si id_session est dans affectations, utiliser: session_id = aff_df['id_session'].iloc[0]
-
-    # Dossiers pour session
-    pdf_dir = os.path.join(OUTPUT_FOLDER, 'affectations', f'session_{session_id}')
-    affectation_csv_dir = os.path.join(OUTPUT_FOLDER, 'affectation_csv', f'session_{session_id}')
-    convocation_csv_dir = os.path.join(OUTPUT_FOLDER, 'convocation_csv', f'session_{session_id}')
-    os.makedirs(pdf_dir, exist_ok=True)
-    os.makedirs(affectation_csv_dir, exist_ok=True)
-    os.makedirs(convocation_csv_dir, exist_ok=True)
-
-    # Affectation globale CSV
-    out_global_csv = os.path.join(affectation_csv_dir, 'affectations_global.csv')
-    aff_df['date_sort'] = pd.to_datetime(aff_df['date'], format='%d/%m/%Y', errors='coerce')
-    aff_df = aff_df.sort_values(
-        ['date_sort', 'h_debut', 'cod_salle', 'nom_ens'],
-        na_position='last'
-    )
-    aff_df = aff_df.drop('date_sort', axis=1)
-    aff_df.to_csv(out_global_csv, index=False, encoding='utf-8')
-    print(f"✓ {out_global_csv}")
-
-    # Fichiers par jour CSV
-    for jour in sorted(aff_df['jour'].unique()):
-        jour_df = aff_df[aff_df['jour'] == jour].copy()
-        out = os.path.join(affectation_csv_dir, f'affectations_jour_{jour}.csv')
-        jour_df.to_csv(out, index=False, encoding='utf-8')
-
-    # Convocations individuelles CSV
-    for code in aff_df['code_smartex_ens'].unique():
-        ens_df = aff_df[aff_df['code_smartex_ens'] == code].copy()
-        nom = ens_df.iloc[0]['nom_ens']
-        prenom = ens_df.iloc[0]['prenom_ens']
-        out = os.path.join(convocation_csv_dir, f'convocation_{nom}_{prenom}.csv')
-        ens_df.to_csv(out, index=False, encoding='utf-8')
-
-    print(f"✓ {len(aff_df['code_smartex_ens'].unique())} convocations individuelles CSV dans {convocation_csv_dir}")
-
-    # PDF (si génération PDF existe, à adapter ici)
-    # Exemple : affectations PDF globale
-    out_global_pdf = os.path.join(pdf_dir, 'affectations_global.pdf')
-    # ...générer le PDF ici et remplacer l'ancien si besoin...
-    # Pour chaque convocation individuelle PDF
-    # out_pdf = os.path.join(pdf_dir, f'convocation_{nom}_{prenom}.pdf')
-    # ...générer le PDF ici et remplacer l'ancien si besoin...
+    
+    out_global = os.path.join(OUTPUT_FOLDER, 'affectations_global.csv')
+    if not aff_df.empty:
+        aff_df['date_sort'] = pd.to_datetime(aff_df['date'], format='%d/%m/%Y', errors='coerce')
+        aff_df = aff_df.sort_values(
+            ['date_sort', 'h_debut', 'cod_salle', 'nom_ens'],
+            na_position='last'
+        )
+        aff_df = aff_df.drop('date_sort', axis=1)
+        
+        aff_df.to_csv(out_global, index=False, encoding='utf-8')
+        print(f"✓ {out_global}")
+        
+        # Fichiers par jour
+        for jour in sorted(aff_df['jour'].unique()):
+            jour_df = aff_df[aff_df['jour'] == jour].copy()
+            out = os.path.join(OUTPUT_FOLDER, f'affectations_jour_{jour}.csv')
+            jour_df.to_csv(out, index=False, encoding='utf-8')
+        
+        # Convocations individuelles
+        for code in aff_df['code_smartex_ens'].unique():
+            ens_df = aff_df[aff_df['code_smartex_ens'] == code].copy()
+            nom = ens_df.iloc[0]['nom_ens']
+            prenom = ens_df.iloc[0]['prenom_ens']
+            out = os.path.join(OUTPUT_FOLDER, f'convocation_{nom}_{prenom}.csv')
+            ens_df.to_csv(out, index=False, encoding='utf-8')
+        
+        print(f"✓ {len(aff_df['code_smartex_ens'].unique())} convocations individuelles")
 
 
 def save_results_to_db(affectations, session_id):
