@@ -710,6 +710,346 @@ def download_convocation_pdf(id_session, filename):
         }), 500
 
 
+# ========== ENDPOINTS PDF PRÉSENCE RESPONSABLES ==========
+
+PRESENCE_PDF_DIR = os.path.join("results", "presences_responsables")
+
+@affectation_bp.route("/generate_presences_responsables/<int:id_session>", methods=["GET"])
+def generate_presences_responsables(id_session):
+    """
+    GET /api/affectations/generate_presences_responsables/<id_session>
+    Génère les PDF de présence pour les responsables absents d'une session
+    
+    Ce endpoint génère un PDF pour chaque enseignant dans la table responsable_absent_jour_examen,
+    listant les créneaux où il est responsable.
+    """
+    try:
+        # Créer le dossier presences_responsables pour cette session s'il n'existe pas
+        session_pdf_dir = os.path.join(PRESENCE_PDF_DIR, f"session_{id_session}")
+        os.makedirs(session_pdf_dir, exist_ok=True)
+        
+        db = get_db()
+
+        # Récupérer les responsables depuis la table responsable_absent_jour_examen
+        cursor = db.execute("""
+            SELECT DISTINCT code_smartex_ens, nom, prenom
+            FROM responsable_absent_jour_examen
+            WHERE id_session = ?
+        """, (id_session,))
+        responsables = cursor.fetchall()
+
+        if not responsables:
+            return jsonify({
+                "message": f"Aucun responsable absent trouvé dans la table pour la session {id_session}"
+            }), 404
+
+        for resp in responsables:
+            code = resp["code_smartex_ens"]
+            nom = resp["nom"]
+            prenom = resp["prenom"]
+
+            # Récupérer tous les créneaux où cet enseignant est responsable
+            cursor.execute("""
+                SELECT dateExam, h_debut, h_fin, cod_salle, type_ex
+                FROM creneau 
+                WHERE id_session = ? AND enseignant = ?
+                ORDER BY dateExam, h_debut
+            """, (id_session, code))
+            rows = cursor.fetchall()
+
+            if not rows:
+                # Si aucun créneau trouvé, passer au suivant
+                continue
+
+            # Créer le PDF dans le dossier de la session
+            pdf_path = os.path.join(session_pdf_dir, f"presence_responsable_{nom}_{prenom}_{id_session}.pdf")
+            doc = SimpleDocTemplate(pdf_path, pagesize=A4, 
+                                   leftMargin=50, rightMargin=50,
+                                   topMargin=100, bottomMargin=80)
+            styles = getSampleStyleSheet()
+            elements = []
+            logo_path = "assets/logo.png"
+            
+            # Créer l'image du logo en gardant le ratio
+            from PIL import Image as PILImage
+            img = PILImage.open(logo_path)
+            img_width, img_height = img.size
+            aspect_ratio = img_height / img_width
+            
+            desired_width = 3*cm
+            logo = RLImage(logo_path, width=desired_width, height=desired_width * aspect_ratio)
+            
+            date_approbation = datetime.now().strftime("%d%m-%y")
+            
+            # En-tête du document
+            header_data = [
+                [logo, "GESTION DES EXAMENS ET\n\n DÉLIBÉRATIONS\n", "EXD-FR-08-01"],
+                ["", "Procédure d'exécution des épreuves", f"Date d'approbation\n{date_approbation}"],
+                ["", "Liste des créneaux de présence des responsables", "Page 1/1"]
+            ]
+            
+            header_table = Table(header_data, colWidths=[4*cm, 12*cm, 4*cm])
+            header_table.setStyle(TableStyle([
+                ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                ("ALIGN", (1, 0), (1, -1), "CENTER"),
+                ("ALIGN", (2, 0), (2, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("FONTNAME", (1, 0), (1, 2), "Helvetica-Bold"),
+                ("FONTSIZE", (1, 0), (1, 0), 16),
+                ("FONTSIZE", (1, 1), (1, 2), 12),
+                ("FONTSIZE", (2, 0), (2, -1), 10),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor("#003366")),
+                ("SPAN", (0, 0), (0, 2)),  # Le logo prend les 3 lignes
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(header_table)
+            elements.append(Spacer(1, 30))
+
+            # Nom du responsable
+            elements.append(Paragraph(
+                f"<b>Notes à</b>", 
+                ParagraphStyle(name="centered", parent=styles["Normal"], alignment=TA_CENTER)
+            ))
+            elements.append(Spacer(1, 5))
+            elements.append(Paragraph(
+                f"<b>Mr/Mme {prenom} {nom}</b>", 
+                ParagraphStyle(name="centered", parent=styles["Heading2"], alignment=TA_CENTER)
+            ))
+            elements.append(Spacer(1, 20))
+            
+            # Texte d'intro
+            intro = ("Cher(e) collègue,<br/>"
+                     "Vous êtes prié(e) d'assurer la responsabilité des examens selon le calendrier ci-joint.")
+            elements.append(Paragraph(intro, styles["Normal"]))
+            elements.append(Spacer(1, 20))
+
+            # Tableau des créneaux de responsabilité
+            data = [["Date", "Heure", "Durée"]]
+            for row in rows:
+                h_debut = row["h_debut"]
+                h_fin = row["h_fin"]
+
+                # Calculer la durée
+                fmt = "%H:%M"
+                try:
+                    h1 = datetime.strptime(h_debut, fmt)
+                    h2 = datetime.strptime(h_fin, fmt)
+                    duration = round((h2 - h1).seconds / 3600, 1)
+                except Exception:
+                    duration = "—"
+
+                data.append([row["dateExam"], h_debut, f"{duration} H"])
+
+            table = Table(data, colWidths=[120, 120, 120])
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightblue),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ]))
+            elements.append(table)
+            elements.append(Spacer(1, 30))
+
+            footer_text = Paragraph("Merci de votre collaboration.", styles["Italic"])
+            elements.append(footer_text)
+            
+            # Construire le PDF avec le footer
+            doc.build(
+                elements, 
+                onFirstPage=lambda c, d: add_footer(c, d, "assets/footer.png"),
+                onLaterPages=lambda c, d: add_footer(c, d, "assets/footer.png")
+            )
+
+        cursor.close()
+        return jsonify({
+            "message": f"PDF de présence des responsables générés avec succès pour la session {id_session}",
+            "nombre_responsables": len(responsables),
+            "dossier": session_pdf_dir
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@affectation_bp.route('/presences_responsables/list/<int:id_session>', methods=['GET'])
+def list_presences_responsables_pdfs(id_session):
+    """
+    GET /api/affectations/presences_responsables/list/<id_session>
+    Liste les PDF de présence des responsables pour une session
+    """
+    try:
+        session_pdf_dir = os.path.join(PRESENCE_PDF_DIR, f"session_{id_session}")
+        
+        if not os.path.exists(session_pdf_dir):
+            return jsonify({
+                "success": False,
+                "message": f"Aucun PDF de présence trouvé pour la session {id_session}",
+                "files": []
+            }), 404
+
+        files = []
+        
+        for fname in sorted(os.listdir(session_pdf_dir)):
+            if fname.lower().endswith('.pdf'):
+                filepath = os.path.join(session_pdf_dir, fname)
+                files.append({
+                    "filename": fname,
+                    "size": os.path.getsize(filepath),
+                    "size_mb": round(os.path.getsize(filepath) / (1024 * 1024), 2),
+                    "created": datetime.fromtimestamp(os.path.getctime(filepath)).strftime('%Y-%m-%d %H:%M:%S'),
+                    "download_url": f"/api/affectations/presences_responsables/download/{id_session}/{fname}"
+                })
+
+        return jsonify({
+            "success": True,
+            "session_id": id_session,
+            "count": len(files),
+            "files": files
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@affectation_bp.route('/presences_responsables/download/<int:id_session>/<path:filename>', methods=['GET'])
+def download_presence_responsable_pdf(id_session, filename):
+    """
+    GET /api/affectations/presences_responsables/download/<id_session>/<filename>
+    Télécharge un PDF de présence responsable
+    """
+    try:
+        # Sécurité : utiliser basename pour éviter les attaques path traversal
+        safe_filename = os.path.basename(filename)
+        filepath = os.path.join(PRESENCE_PDF_DIR, f"session_{id_session}", safe_filename)
+        
+        if not os.path.exists(filepath):
+            return jsonify({
+                "success": False,
+                "error": "Fichier non trouvé",
+                "filepath": filepath
+            }), 404
+        
+        return send_file(
+            filepath,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=safe_filename
+        )
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@affectation_bp.route('/presences_responsables/download-multiple/<int:id_session>', methods=['POST'])
+def download_multiple_presences_responsables(id_session):
+    """
+    POST /api/affectations/presences_responsables/download-multiple/<id_session>
+    Télécharge plusieurs PDFs de présence responsables en un seul fichier ZIP
+    
+    Body JSON:
+    {
+        "filenames": ["presence_responsable_NOM1_Prenom1_4.pdf", "presence_responsable_NOM2_Prenom2_4.pdf"],
+        "download_all": false  // Optionnel: si true, télécharge tous les PDFs
+    }
+    
+    Returns:
+        Fichier ZIP contenant les PDFs sélectionnés
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'error': 'Corps de requête JSON requis',
+                'expected': {
+                    'filenames': ['file1.pdf', 'file2.pdf'],
+                    'download_all': False
+                }
+            }), 400
+        
+        session_pdf_dir = os.path.join(PRESENCE_PDF_DIR, f"session_{id_session}")
+        
+        if not os.path.exists(session_pdf_dir):
+            return jsonify({
+                'error': f'Aucun PDF de présence trouvé pour la session {id_session}'
+            }), 404
+        
+        download_all = data.get('download_all', False)
+        
+        # Déterminer les fichiers à inclure
+        if download_all:
+            # Télécharger tous les PDFs
+            filenames = [f for f in os.listdir(session_pdf_dir) if f.lower().endswith('.pdf')]
+        else:
+            # Télécharger uniquement les fichiers sélectionnés
+            if 'filenames' not in data or not data['filenames']:
+                return jsonify({
+                    'error': 'Liste de fichiers requise (filenames) ou utilisez download_all=true'
+                }), 400
+            filenames = data['filenames']
+        
+        if not filenames or len(filenames) == 0:
+            return jsonify({
+                'error': 'Aucun fichier à télécharger'
+            }), 400
+        
+        # Créer un fichier ZIP en mémoire
+        zip_buffer = BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            added_files = []
+            missing_files = []
+            
+            for filename in filenames:
+                # Sécurité : utiliser basename
+                safe_filename = os.path.basename(filename)
+                filepath = os.path.join(session_pdf_dir, safe_filename)
+                
+                if os.path.exists(filepath):
+                    # Ajouter le fichier au ZIP
+                    zip_file.write(filepath, safe_filename)
+                    added_files.append(safe_filename)
+                else:
+                    missing_files.append(safe_filename)
+        
+        # Si aucun fichier n'a été ajouté
+        if len(added_files) == 0:
+            return jsonify({
+                'error': 'Aucun fichier valide trouvé',
+                'missing_files': missing_files
+            }), 404
+        
+        # Préparer le buffer pour l'envoi
+        zip_buffer.seek(0)
+        
+        # Nom du fichier ZIP
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        zip_filename = f"presences_responsables_session_{id_session}_{timestamp}.zip"
+        
+        return send_file(
+            zip_buffer,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=zip_filename
+        )
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e)
+        }), 500
+
+
 @affectation_bp.route('/download-multiple', methods=['POST'])
 def download_multiple_files():
     """

@@ -43,7 +43,9 @@ def index():
             'statistics_all': '/api/statistics/sessions',
             'presence': '/api/presence',
             'presence_session': '/api/presence/session/<id_session>',
-            'presence_enseignant': '/api/presence/enseignant/<code_smartex>'
+            'presence_enseignant': '/api/presence/enseignant/<code_smartex>',
+            'generate_convocations': '/api/affectations/generate_convocations/<id_session>',
+            'generate_presences_responsables': '/api/affectations/generate_presences_responsables/<id_session>'
         }
     })
 

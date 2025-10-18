@@ -134,7 +134,8 @@ def get_storage_info():
             'affectations_pdf': os.path.join('results', 'affectations'),
             'affectations_csv': os.path.join('results', 'affectation_csv'),
             'convocations_pdf': os.path.join('results', 'convocations'),
-            'convocations_csv': os.path.join('results', 'convocation_csv')
+            'convocations_csv': os.path.join('results', 'convocation_csv'),
+            'presences_responsables_pdf': os.path.join('results', 'presences_responsables')
         }
         
         # Calculer les tailles globales
@@ -164,7 +165,9 @@ def get_storage_info():
             file_counts[category] = file_count
         
         # Calculer les totaux combinés
-        total_pdf_size = totals['affectations_pdf']['size_bytes'] + totals['convocations_pdf']['size_bytes']
+        total_pdf_size = (totals['affectations_pdf']['size_bytes'] + 
+                         totals['convocations_pdf']['size_bytes'] + 
+                         totals['presences_responsables_pdf']['size_bytes'])
         total_csv_size = totals['affectations_csv']['size_bytes'] + totals['convocations_csv']['size_bytes']
         total_all_size = total_pdf_size + total_csv_size
         
@@ -182,6 +185,7 @@ def get_storage_info():
                 'affectations_csv': None,
                 'convocations_pdf': None,
                 'convocations_csv': None,
+                'presences_responsables_pdf': None,
                 'total_bytes': 0
             }
             
@@ -203,6 +207,7 @@ def get_storage_info():
                 'affectations_csv': totals['affectations_csv']['size'],
                 'convocations_pdf': totals['convocations_pdf']['size'],
                 'convocations_csv': totals['convocations_csv']['size'],
+                'presences_responsables_pdf': totals['presences_responsables_pdf']['size'],
                 'total_pdf': format_size(total_pdf_size),
                 'total_csv': format_size(total_csv_size),
                 'total_all': format_size(total_all_size)
@@ -249,14 +254,16 @@ def delete_all_files():
             'affectations_pdf': 0,
             'affectations_csv': 0,
             'convocations_pdf': 0,
-            'convocations_csv': 0
+            'convocations_csv': 0,
+            'presences_responsables_pdf': 0
         }
         
         base_paths = {
             'affectations_pdf': os.path.join('results', 'affectations'),
             'affectations_csv': os.path.join('results', 'affectation_csv'),
             'convocations_pdf': os.path.join('results', 'convocations'),
-            'convocations_csv': os.path.join('results', 'convocation_csv')
+            'convocations_csv': os.path.join('results', 'convocation_csv'),
+            'presences_responsables_pdf': os.path.join('results', 'presences_responsables')
         }
         
         for category, path in base_paths.items():
@@ -325,14 +332,16 @@ def delete_session_files(session_id):
             'affectations_pdf': 0,
             'affectations_csv': 0,
             'convocations_pdf': 0,
-            'convocations_csv': 0
+            'convocations_csv': 0,
+            'presences_responsables_pdf': 0
         }
         
         session_folders = {
             'affectations_pdf': os.path.join('results', 'affectations', f'session_{session_id}'),
             'affectations_csv': os.path.join('results', 'affectation_csv', f'session_{session_id}'),
             'convocations_pdf': os.path.join('results', 'convocations', f'session_{session_id}'),
-            'convocations_csv': os.path.join('results', 'convocation_csv', f'session_{session_id}')
+            'convocations_csv': os.path.join('results', 'convocation_csv', f'session_{session_id}'),
+            'presences_responsables_pdf': os.path.join('results', 'presences_responsables', f'session_{session_id}')
         }
         
         found_any = False
@@ -396,7 +405,8 @@ def cleanup_empty_folders():
             os.path.join('results', 'affectations'),
             os.path.join('results', 'affectation_csv'),
             os.path.join('results', 'convocations'),
-            os.path.join('results', 'convocation_csv')
+            os.path.join('results', 'convocation_csv'),
+            os.path.join('results', 'presences_responsables')
         ]
         
         deleted_folders = []
