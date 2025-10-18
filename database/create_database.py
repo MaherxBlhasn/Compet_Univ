@@ -242,8 +242,13 @@ def create_database():
             code_smartex_ens TEXT NOT NULL,
             nom TEXT NOT NULL,
             prenom TEXT NOT NULL,
+            grade_code TEXT,
             participe_surveillance INTEGER NOT NULL,
-            nbre_creneaux INTEGER NOT NULL,
+            nbre_jours_absents INTEGER NOT NULL,
+            nbre_creneaux_absents INTEGER NOT NULL,
+            nbre_total_jours_responsable INTEGER NOT NULL,
+            nbre_total_creneaux_responsable INTEGER NOT NULL,
+            dates_absentes TEXT,
             FOREIGN KEY (id_session) REFERENCES session(id_session) ON DELETE CASCADE,
             FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens) ON DELETE CASCADE
         )

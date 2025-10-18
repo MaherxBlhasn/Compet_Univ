@@ -378,82 +378,36 @@ def _analyze_coverage(db, id_session, aff_df):
 
 
 def _analyze_responsables(db, id_session, aff_df):
-    """Analyser la présence des responsables de salles"""
+    """
+    Analyser la présence des responsables de salles
+    Retourne uniquement les 3 indicateurs essentiels
+    """
     
-    # Récupérer les créneaux avec responsables
-    creneaux_resp = db.execute('''
-        SELECT 
-            creneau_id,
-            dateExam,
-            h_debut,
-            cod_salle,
-            enseignant as responsable
-        FROM creneau
-        WHERE id_session = ? 
-        AND enseignant IS NOT NULL
-    ''', (id_session,)).fetchall()
-    
-    if not creneaux_resp:
-        return {
-            'total_responsabilites': 0,
-            'responsables_presents_jour': 0,
-            'responsables_presents_creneau': 0,
-            'taux_presence_jour': 100.0,
-            'taux_presence_creneau': 100.0
-        }
-    
-    # Vérifier quels responsables participent aux surveillances
-    enseignants_surveillants = db.execute('''
-        SELECT code_smartex_ens
+    # Récupérer le nombre total d'enseignants qui participent aux surveillances
+    total_enseignants_surveillants = db.execute('''
+        SELECT COUNT(*) as count
         FROM enseignant
         WHERE participe_surveillance = 1
-    ''').fetchall()
-    surveillants_set = {e['code_smartex_ens'] for e in enseignants_surveillants}
+    ''', ()).fetchone()['count']
     
-    total_resp = 0
-    presents_jour = 0
-    presents_creneau = 0
+    # Récupérer les responsables absents depuis la table responsable_absent_jour_examen
+    # (Seulement ceux qui participent aux surveillances)
+    responsables_absents = db.execute('''
+        SELECT COUNT(*) as count
+        FROM responsable_absent_jour_examen
+        WHERE id_session = ?
+            AND participe_surveillance = 1
+    ''', (id_session,)).fetchone()['count']
     
-    for creneau in creneaux_resp:
-        try:
-            resp_code = int(creneau['responsable'])
-        except (ValueError, TypeError):
-            continue
-        
-        # Ignorer si le responsable ne participe pas aux surveillances
-        if resp_code not in surveillants_set:
-            continue
-        
-        total_resp += 1
-        
-        # Vérifier présence le même jour
-        matching_jour = aff_df[
-            (aff_df['code_smartex_ens'] == resp_code) &
-            (aff_df['dateExam'] == creneau['dateExam'])
-        ]
-        
-        if len(matching_jour) > 0:
-            presents_jour += 1
-        
-        # Vérifier présence au même créneau
-        matching_creneau = aff_df[
-            (aff_df['code_smartex_ens'] == resp_code) &
-            (aff_df['creneau_id'] == creneau['creneau_id'])
-        ]
-        
-        if len(matching_creneau) > 0:
-            presents_creneau += 1
-    
-    taux_jour = (presents_jour / total_resp * 100) if total_resp > 0 else 100.0
-    taux_creneau = (presents_creneau / total_resp * 100) if total_resp > 0 else 100.0
+    # Calculer le taux de surveillants responsables présents
+    # = 100 - (nb_responsables_absents / total_enseignants_surveillants) × 100
+    taux_absence = (responsables_absents / total_enseignants_surveillants * 100) if total_enseignants_surveillants > 0 else 0.0
+    taux_surveillants_responsable_present = 100.0 - taux_absence
     
     return {
-        'total_responsabilites': int(total_resp),
-        'responsables_presents_jour': int(presents_jour),
-        'responsables_presents_creneau': int(presents_creneau),
-        'responsables_absents': int(total_resp - presents_jour),
-        'taux_presence_jour': round(taux_jour, 2),
-        'taux_presence_creneau': round(taux_creneau, 2)
+        'responsables_absents_count': int(responsables_absents),
+        'total_enseignants_surveillants': int(total_enseignants_surveillants),
+        'taux_surveillants_responsable_present': round(taux_surveillants_responsable_present, 2)
     }
 
 
@@ -630,7 +584,7 @@ def _calculate_global_score(stats):
     score += (couverture_taux / 100) * 25
     
     # Responsables (20 points)
-    resp_taux = stats['responsables'].get('taux_presence_jour', 0)
+    resp_taux = stats['responsables'].get('taux_surveillants_responsable_present', 0)
     score += (resp_taux / 100) * 20
     
     return {
@@ -705,6 +659,146 @@ def get_all_sessions_statistics():
         return jsonify({
             'total_sessions': len(sessions),
             'sessions': sessions_stats
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@statistics_bp.route('/session/<int:id_session>/responsables-absents', methods=['GET'])
+def get_responsables_absents(id_session):
+    """
+    GET /api/statistics/session/<id_session>/responsables-absents
+    
+    Retourne la liste des responsables qui sont ABSENTS le jour de leur examen
+    (c'est-à-dire : ils sont responsables d'un examen à une date donnée,
+     mais n'ont aucune affectation de surveillance à cette même date)
+    """
+    try:
+        db = get_db()
+        
+        # Vérifier que la session existe
+        session = db.execute(
+            'SELECT * FROM session WHERE id_session = ?', 
+            (id_session,)
+        ).fetchone()
+        
+        if session is None:
+            return jsonify({'error': 'Session non trouvée'}), 404
+        
+        # Récupérer les responsables absents depuis la table
+        responsables_absents = db.execute('''
+            SELECT 
+                code_smartex_ens,
+                nom,
+                prenom,
+                grade_code,
+                participe_surveillance,
+                nbre_jours_absents,
+                nbre_creneaux_absents,
+                nbre_total_jours_responsable,
+                nbre_total_creneaux_responsable,
+                dates_absentes
+            FROM responsable_absent_jour_examen
+            WHERE id_session = ?
+            ORDER BY nom, prenom
+        ''', (id_session,)).fetchall()
+        
+        # Récupérer les détails pour chaque responsable absent
+        details = []
+        
+        for resp in responsables_absents:
+            code = resp['code_smartex_ens']
+            
+            # Trouver les dates où il est responsable mais absent
+            creneaux_responsable = db.execute('''
+                SELECT DISTINCT
+                    dateExam,
+                    COUNT(*) as nb_creneaux_ce_jour
+                FROM creneau
+                WHERE id_session = ?
+                    AND enseignant = ?
+                GROUP BY dateExam
+                ORDER BY dateExam
+            ''', (id_session, code)).fetchall()
+            
+            dates_absentes = []
+            
+            for creneau_jour in creneaux_responsable:
+                date = creneau_jour['dateExam']
+                
+                # Vérifier si affecté ce jour
+                affecte = db.execute('''
+                    SELECT COUNT(*) as count
+                    FROM affectation a
+                    JOIN creneau c ON a.creneau_id = c.creneau_id
+                    WHERE a.code_smartex_ens = ?
+                        AND c.dateExam = ?
+                        AND c.id_session = ?
+                ''', (code, date, id_session)).fetchone()
+                
+                if affecte['count'] == 0:
+                    # Récupérer les créneaux de ce jour où il est responsable
+                    creneaux_detail = db.execute('''
+                        SELECT 
+                            creneau_id,
+                            h_debut,
+                            h_fin,
+                            cod_salle,
+                            type_ex
+                        FROM creneau
+                        WHERE id_session = ?
+                            AND enseignant = ?
+                            AND dateExam = ?
+                        ORDER BY h_debut
+                    ''', (id_session, code, date)).fetchall()
+                    
+                    dates_absentes.append({
+                        'date': date,
+                        'nb_creneaux': len(creneaux_detail),
+                        'creneaux': [dict(c) for c in creneaux_detail]
+                    })
+            
+            details.append({
+                'code_smartex_ens': code,
+                'nom': resp['nom'],
+                'prenom': resp['prenom'],
+                'grade': resp['grade_code'],
+                'participe_surveillance': resp['participe_surveillance'] == 1,
+                'nbre_jours_absents': resp['nbre_jours_absents'],
+                'nbre_total_jours_responsable': resp['nbre_total_jours_responsable'],
+                'nbre_creneaux_absents': resp['nbre_creneaux_absents'],
+                'nbre_total_creneaux_responsable': resp['nbre_total_creneaux_responsable'],
+                'dates_absentes': resp['dates_absentes'].split(',') if resp['dates_absentes'] else [],
+                'dates_absentes_details': dates_absentes
+            })
+        
+        # Statistiques globales
+        total_responsables_absents = len(details)
+        total_creneaux_sans_responsable = sum(r['nbre_creneaux_absents'] for r in details)
+        
+        # Compter le total de responsabilités
+        total_responsabilites = db.execute('''
+            SELECT COUNT(*) as count
+            FROM creneau
+            WHERE id_session = ?
+                AND enseignant IS NOT NULL
+        ''', (id_session,)).fetchone()['count']
+        
+        taux_absence = 0
+        if total_responsabilites > 0:
+            taux_absence = (total_creneaux_sans_responsable / total_responsabilites) * 100
+        
+        return jsonify({
+            'session_id': id_session,
+            'session_libelle': session['libelle_session'],
+            'statistiques': {
+                'total_responsables_absents': total_responsables_absents,
+                'total_creneaux_sans_responsable': total_creneaux_sans_responsable,
+                'total_responsabilites': total_responsabilites,
+                'taux_absence': round(taux_absence, 2)
+            },
+            'responsables_absents': details
         }), 200
         
     except Exception as e:

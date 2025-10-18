@@ -150,51 +150,57 @@ class SurveillanceStatistics:
         }
     
     def _compute_responsable_stats(self):
-        """Analyser la disponibilité des responsables (uniquement ceux avec participe_surveillance=1)"""
+        """Analyser la disponibilité des responsables"""
         print("\n[3] RESPONSABLES DE SALLES")
+        
+        # Total d'enseignants avec participe_surveillance=1
+        total_enseignants_surveillants = sum(1 for t in self.teachers.values() if t['participe'])
         
         planning_df_copy = self.planning_df.copy()
         planning_df_copy['h_debut_parsed'] = planning_df_copy['h_debut'].apply(parse_time)
         
-        salle_responsable = {}
+        # Collecter les responsables par date (enseignants uniques)
+        responsables_par_date = defaultdict(set)
         for _, row in planning_df_copy.iterrows():
             date = row['dateExam']
-            h_debut = row['h_debut_parsed']
-            salle = row['cod_salle']
             responsable = row['enseignant']
             
-            if pd.notna(date) and pd.notna(h_debut) and pd.notna(salle) and pd.notna(responsable):
+            if pd.notna(date) and pd.notna(responsable):
                 try:
                     responsable = int(responsable)
                     # Vérifier que le responsable participe aux surveillances
                     if responsable in self.teachers and self.teachers[responsable]['participe']:
-                        key = (date, h_debut, salle)
-                        salle_responsable[key] = responsable
+                        responsables_par_date[date].add(responsable)
                 except (ValueError, TypeError):
                     continue
         
-        responsables_assignes = 0
-        for (date, h_debut, salle), resp_code in salle_responsable.items():
-            # Vérifier si le responsable est présent LE JOUR de son examen (pas seulement au même créneau)
-            matching = self.aff[
-                (self.aff['code_smartex_ens'] == resp_code) &
-                (self.aff['date'] == date)
-            ]
-            
-            if len(matching) > 0:
-                responsables_assignes += 1
+        # Vérifier pour chaque responsable s'il est présent le jour de son examen
+        responsables_absents = set()
         
-        total_resp = len(salle_responsable)
-        taux = (responsables_assignes / total_resp * 100) if total_resp > 0 else 0
+        for date, responsables in responsables_par_date.items():
+            for resp_code in responsables:
+                # Vérifier si le responsable est affecté à une surveillance CE JOUR
+                matching = self.aff[
+                    (self.aff['code_smartex_ens'] == resp_code) &
+                    (self.aff['date'] == date)
+                ]
+                
+                # Si aucune affectation ce jour = absent
+                if len(matching) == 0:
+                    responsables_absents.add(resp_code)
         
-        print(f"    Responsabilités à couvrir : {total_resp} (participe_surveillance=1)")
-        print(f"    Responsables présents le jour de l'examen : {responsables_assignes} ({taux:.1f}%)")
-        print(f"    Responsables absents : {total_resp - responsables_assignes} ({100-taux:.1f}%)")
+        nb_responsables_absents = len(responsables_absents)
+        nb_responsables_presents = total_enseignants_surveillants - nb_responsables_absents
+        taux = (nb_responsables_presents / total_enseignants_surveillants * 100) if total_enseignants_surveillants > 0 else 0
+        
+        print(f"    Total enseignants surveillants (participe_surveillance=1) : {total_enseignants_surveillants}")
+        print(f"    Responsables absents le jour de leur examen : {nb_responsables_absents}")
+        print(f"    Responsables présents : {nb_responsables_presents} ({taux:.1f}%)")
         
         return {
-            'total': total_resp,
-            'presents': responsables_assignes,
-            'absents': total_resp - responsables_assignes,
+            'total': total_enseignants_surveillants,
+            'presents': nb_responsables_presents,
+            'absents': nb_responsables_absents,
             'taux_presence': taux
         }
     

@@ -40,7 +40,10 @@ def index():
             'voeux': '/api/voeux',
             'affectations': '/api/affectations',
             'statistics': '/api/statistics/session/<id_session>',
-            'statistics_all': '/api/statistics/sessions'
+            'statistics_all': '/api/statistics/sessions',
+            'presence': '/api/presence',
+            'presence_session': '/api/presence/session/<id_session>',
+            'presence_enseignant': '/api/presence/enseignant/<code_smartex>'
         }
     })
 
