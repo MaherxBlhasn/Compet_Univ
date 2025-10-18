@@ -29,7 +29,6 @@ from scripts.quota_enseignant_module import create_quota_enseignant_table, compu
 # Configuration
 DB_NAME = 'surveillance.db'
 OUTPUT_FOLDER = 'results'
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 
 def get_db_connection():
@@ -1009,39 +1008,10 @@ def assign_rooms_equitable(affectations, creneaux, planning_df):
     return results
 
 
-def save_results(affectations):
-    """Sauvegarder les résultats"""
-    print("\n=== SAUVEGARDE DES RÉSULTATS ===")
-    
-    aff_df = pd.DataFrame(affectations)
-    
-    out_global = os.path.join(OUTPUT_FOLDER, 'affectations_global.csv')
-    if not aff_df.empty:
-        aff_df['date_sort'] = pd.to_datetime(aff_df['date'], format='%d/%m/%Y', errors='coerce')
-        aff_df = aff_df.sort_values(
-            ['date_sort', 'h_debut', 'cod_salle', 'nom_ens'],
-            na_position='last'
-        )
-        aff_df = aff_df.drop('date_sort', axis=1)
-        
-        aff_df.to_csv(out_global, index=False, encoding='utf-8')
-        print(f"✓ {out_global}")
-        
-        # Fichiers par jour
-        for jour in sorted(aff_df['jour'].unique()):
-            jour_df = aff_df[aff_df['jour'] == jour].copy()
-            out = os.path.join(OUTPUT_FOLDER, f'affectations_jour_{jour}.csv')
-            jour_df.to_csv(out, index=False, encoding='utf-8')
-        
-        # Convocations individuelles
-        for code in aff_df['code_smartex_ens'].unique():
-            ens_df = aff_df[aff_df['code_smartex_ens'] == code].copy()
-            nom = ens_df.iloc[0]['nom_ens']
-            prenom = ens_df.iloc[0]['prenom_ens']
-            out = os.path.join(OUTPUT_FOLDER, f'convocation_{nom}_{prenom}.csv')
-            ens_df.to_csv(out, index=False, encoding='utf-8')
-        
-        print(f"✓ {len(aff_df['code_smartex_ens'].unique())} convocations individuelles")
+# Note: La fonction save_results() a été supprimée.
+# La génération des CSV se fait maintenant via l'API:
+# GET /api/affectations/csv/<session_id>
+# Similaire à la génération des PDF: GET /api/affectations/pdf/<session_id>
 
 
 def save_results_to_db(affectations, session_id):
@@ -1192,7 +1162,9 @@ def main():
             voeux_set,
             planning_df
         )
-        save_results(result['affectations'])
+        
+        # Note: La génération des CSV se fait maintenant via l'API
+        # GET /api/affectations/csv/<session_id>
         
         # Sauvegarder dans la base de données
         nb_inserted = save_results_to_db(result['affectations'], session_id)

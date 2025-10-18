@@ -2,6 +2,7 @@ import sqlite3
 from flask import Blueprint, jsonify, request,send_file
 from database.database import get_db, remplir_responsables_absents
 import os
+import pandas as pd
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
@@ -1080,3 +1081,199 @@ def permuter_affectations():
         return jsonify({'message': 'Permutation effectuée avec succès.'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@affectation_bp.route('/csv/affectations/<int:session_id>', methods=['GET'])
+def generate_affectations_csv(session_id):
+    """
+    Génère les fichiers CSV d'affectations globales pour une session
+    (similaire à /pdf/<session_id>):
+    - affectations_global_session_{id}.csv
+    - affectations_jour_{n}_session_{id}.csv
+    
+    Args:
+        session_id: ID de la session
+    
+    Returns:
+        JSON avec la liste des fichiers générés
+    """
+    try:
+        db = get_db()
+        
+        # Vérifier que la session existe
+        session = db.execute('SELECT * FROM session WHERE id_session = ?', (session_id,)).fetchone()
+        if not session:
+            return jsonify({
+                "success": False,
+                "error": f"Session {session_id} non trouvée"
+            }), 404
+        
+        # Récupérer toutes les affectations de la session
+        query = '''
+            SELECT 
+                a.code_smartex_ens,
+                e.nom_ens,
+                e.prenom_ens,
+                e.grade_code_ens,
+                c.dateExam as date,
+                c.h_debut,
+                c.h_fin,
+                c.cod_salle,
+                c.type_ex,
+                a.position,
+                a.jour,
+                a.seance
+            FROM affectation a
+            JOIN enseignant e ON a.code_smartex_ens = e.code_smartex_ens
+            JOIN creneau c ON a.creneau_id = c.creneau_id
+            WHERE c.id_session = ?
+            ORDER BY c.dateExam, c.h_debut, c.cod_salle, e.nom_ens
+        '''
+        
+        affectations = db.execute(query, (session_id,)).fetchall()
+        
+        if not affectations:
+            return jsonify({
+                "success": False,
+                "error": f"Aucune affectation trouvée pour la session {session_id}"
+            }), 404
+        
+        # Convertir en DataFrame
+        aff_df = pd.DataFrame([dict(row) for row in affectations])
+        
+        # Créer le dossier pour cette session
+        affectation_csv_dir = os.path.join('results', 'affectation_csv', f'session_{session_id}')
+        os.makedirs(affectation_csv_dir, exist_ok=True)
+        
+        files_generated = []
+        
+        # 1. Affectation globale
+        out_global = os.path.join(affectation_csv_dir, f'affectations_global_session_{session_id}.csv')
+        aff_df.to_csv(out_global, index=False, encoding='utf-8')
+        files_generated.append(out_global)
+        print(f"✓ {out_global}")
+        
+        # 2. Fichiers par jour
+        jours_count = 0
+        if 'jour' in aff_df.columns:
+            for jour in sorted(aff_df['jour'].unique()):
+                if pd.notna(jour):
+                    jour_df = aff_df[aff_df['jour'] == jour].copy()
+                    out = os.path.join(affectation_csv_dir, f'affectations_jour_{int(jour)}_session_{session_id}.csv')
+                    jour_df.to_csv(out, index=False, encoding='utf-8')
+                    files_generated.append(out)
+                    jours_count += 1
+                    print(f"✓ {out}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"CSV d'affectations générés avec succès pour la session {session_id}",
+            "session_id": session_id,
+            "files_count": len(files_generated),
+            "affectations_count": len(aff_df),
+            "jours_count": jours_count,
+            "directory": affectation_csv_dir,
+            "files": files_generated
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": f"Erreur lors de la génération des CSV d'affectations: {str(e)}",
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@affectation_bp.route('/csv/convocations/<int:session_id>', methods=['GET'])
+def generate_convocations_csv(session_id):
+    """
+    Génère les fichiers CSV de convocations individuelles pour une session
+    (similaire à /generate_convocations/<session_id>):
+    - convocation_{nom}_{prenom}_session_{id}.csv (un par enseignant)
+    
+    Args:
+        session_id: ID de la session
+    
+    Returns:
+        JSON avec la liste des fichiers générés
+    """
+    try:
+        db = get_db()
+        
+        # Vérifier que la session existe
+        session = db.execute('SELECT * FROM session WHERE id_session = ?', (session_id,)).fetchone()
+        if not session:
+            return jsonify({
+                "success": False,
+                "error": f"Session {session_id} non trouvée"
+            }), 404
+        
+        # Récupérer toutes les affectations de la session
+        query = '''
+            SELECT 
+                a.code_smartex_ens,
+                e.nom_ens,
+                e.prenom_ens,
+                e.grade_code_ens,
+                c.dateExam as date,
+                c.h_debut,
+                c.h_fin,
+                c.cod_salle,
+                c.type_ex,
+                a.position,
+                a.jour,
+                a.seance
+            FROM affectation a
+            JOIN enseignant e ON a.code_smartex_ens = e.code_smartex_ens
+            JOIN creneau c ON a.creneau_id = c.creneau_id
+            WHERE c.id_session = ?
+            ORDER BY c.dateExam, c.h_debut, c.cod_salle
+        '''
+        
+        affectations = db.execute(query, (session_id,)).fetchall()
+        
+        if not affectations:
+            return jsonify({
+                "success": False,
+                "error": f"Aucune affectation trouvée pour la session {session_id}"
+            }), 404
+        
+        # Convertir en DataFrame
+        aff_df = pd.DataFrame([dict(row) for row in affectations])
+        
+        # Créer le dossier pour cette session
+        convocation_csv_dir = os.path.join('results', 'convocation_csv', f'session_{session_id}')
+        os.makedirs(convocation_csv_dir, exist_ok=True)
+        
+        files_generated = []
+        
+        # Générer une convocation par enseignant
+        convocations_generated = 0
+        for code in aff_df['code_smartex_ens'].unique():
+            ens_df = aff_df[aff_df['code_smartex_ens'] == code].copy()
+            nom = ens_df.iloc[0]['nom_ens']
+            prenom = ens_df.iloc[0]['prenom_ens']
+            out = os.path.join(convocation_csv_dir, f'convocation_{nom}_{prenom}_session_{session_id}.csv')
+            ens_df.to_csv(out, index=False, encoding='utf-8')
+            files_generated.append(out)
+            convocations_generated += 1
+            print(f"✓ {out}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"CSV de convocations générés avec succès pour la session {session_id}",
+            "session_id": session_id,
+            "files_count": len(files_generated),
+            "convocations_count": convocations_generated,
+            "directory": convocation_csv_dir,
+            "files": files_generated[:10]  # Limiter la liste pour ne pas surcharger la réponse
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": f"Erreur lors de la génération des CSV de convocations: {str(e)}",
+            "traceback": traceback.format_exc()
+        }), 500

@@ -60,11 +60,14 @@ def run():
     Body:
     {
         "session_id": 1,
-        "save": true,
-        "clear": true,
-        "generate_files": true,
-        "generate_stats": true
+        "save": true,               // Sauvegarder en base de données
+        "clear": true,              // Supprimer anciennes affectations avant
+        "generate_files": true,     // Générer quota_enseignant.csv (Note: Pour les CSV d'affectations, utilisez /api/affectations/csv/<session_id>)
+        "generate_stats": true      // Générer les statistiques
     }
+    
+    Note: La génération des CSV d'affectations (global, par jour, convocations) 
+    se fait maintenant via GET /api/affectations/csv/<session_id>
     """
     db = get_db()
     data = request.get_json()
@@ -108,8 +111,7 @@ def run():
             build_creneaux_from_salles,
             map_creneaux_to_jours_seances,
             build_teachers_dict,
-            build_voeux_set,
-            save_results
+            build_voeux_set
         )
         
         print("\n2. Construction des structures...")
@@ -171,13 +173,10 @@ def run():
                     planning_df
                 )
             
-            # Save CSV files
+            # Note: La génération des CSV se fait maintenant via l'API
+            # GET /api/affectations/csv/<session_id>
             if generate_files:
-                print("\n6. Génération des fichiers CSV...")
-                save_results(result['affectations'])
-                files_generated.append('affectations_global.csv')
-                files_generated.append('convocations individuelles')
-                files_generated.append('affectations par jour')
+                print("\n6. Note: Pour générer les CSV d'affectations, utilisez GET /api/affectations/csv/<session_id>")
             
             # Save to database
             if save:
