@@ -13,6 +13,8 @@ from reportlab.lib.styles import ParagraphStyle
 from io import BytesIO
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.pdfbase import pdfmetrics
+import zipfile
+from datetime import datetime
 
 
 affectation_bp = Blueprint('affectations', __name__)
@@ -621,8 +623,426 @@ def generate_convocations(id_session):
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@affectation_bp.route('/convocations/list/<int:id_session>', methods=['GET'])
+def list_convocations_pdfs(id_session):
+    """
+    GET /api/affectations/convocations/list/<id_session> - Liste les convocations PDF pour une session
     
- 
+    Args:
+        id_session: ID de la session
+    
+    Returns:
+        JSON avec la liste des fichiers PDF de convocations disponibles
+    """
+    try:
+        session_pdf_dir = os.path.join(PDF_DIR, f"session_{id_session}")
+        
+        if not os.path.exists(session_pdf_dir):
+            return jsonify({
+                "success": False,
+                "message": f"Aucune convocation trouvée pour la session {id_session}",
+                "files": []
+            }), 404
+
+        files = []
+        from datetime import datetime
+        
+        for fname in sorted(os.listdir(session_pdf_dir)):
+            if fname.lower().endswith('.pdf'):
+                filepath = os.path.join(session_pdf_dir, fname)
+                files.append({
+                    "filename": fname,
+                    "size": os.path.getsize(filepath),
+                    "size_mb": round(os.path.getsize(filepath) / (1024 * 1024), 2),
+                    "created": datetime.fromtimestamp(os.path.getctime(filepath)).strftime('%Y-%m-%d %H:%M:%S'),
+                    "download_url": f"/api/affectations/convocations/download/{id_session}/{fname}"
+                })
+
+        return jsonify({
+            "success": True,
+            "session_id": id_session,
+            "count": len(files),
+            "files": files
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+@affectation_bp.route('/convocations/download/<int:id_session>/<path:filename>', methods=['GET'])
+def download_convocation_pdf(id_session, filename):
+    """
+    GET /api/affectations/convocations/download/<id_session>/<filename> - Télécharge une convocation PDF
+    
+    Args:
+        id_session: ID de la session
+        filename: Nom du fichier PDF à télécharger
+    
+    Returns:
+        Fichier PDF en téléchargement
+    """
+    try:
+        # Sécurité : utiliser basename pour éviter les attaques path traversal
+        safe_filename = os.path.basename(filename)
+        filepath = os.path.join(PDF_DIR, f"session_{id_session}", safe_filename)
+        
+        if not os.path.exists(filepath):
+            return jsonify({
+                "success": False,
+                "error": "Fichier non trouvé",
+                "filepath": filepath
+            }), 404
+        
+        return send_file(
+            filepath,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=safe_filename
+        )
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@affectation_bp.route('/download-multiple', methods=['POST'])
+def download_multiple_files():
+    """
+    POST /api/affectations/download-multiple - Télécharge plusieurs fichiers (PDFs ou CSVs) en un fichier ZIP
+    
+    Body JSON:
+    {
+        "session_id": 1,
+        "files": [
+            {"type": "convocation", "format": "pdf", "filename": "convocation_Nom_Prenom_1.pdf"},
+            {"type": "convocation", "format": "csv", "filename": "convocation_Nom_Prenom_session_1.csv"},
+            {"type": "affectation", "format": "pdf", "filename": "affectation_session_1_20250118_123456.pdf"},
+            {"type": "affectation", "format": "csv", "filename": "affectations_global_session_1.csv"}
+        ]
+    }
+    
+    Types acceptés:
+    - "convocation": Fichiers individuels de convocations
+    - "affectation": Fichiers globaux d'affectations
+    
+    Formats acceptés:
+    - "pdf": Fichiers PDF
+    - "csv": Fichiers CSV
+    
+    Returns:
+        Fichier ZIP contenant tous les fichiers sélectionnés
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'files' not in data or 'session_id' not in data:
+            return jsonify({
+                "success": False,
+                "error": "Paramètres requis: session_id et files (array)"
+            }), 400
+        
+        session_id = data['session_id']
+        files_to_download = data['files']
+        
+        if not files_to_download or len(files_to_download) == 0:
+            return jsonify({
+                "success": False,
+                "error": "La liste de fichiers est vide"
+            }), 400
+        
+        # Créer un fichier ZIP en mémoire
+        zip_buffer = BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            added_files = []
+            missing_files = []
+            
+            for file_info in files_to_download:
+                file_type = file_info.get('type')  # "convocation" ou "affectation"
+                file_format = file_info.get('format', 'pdf')  # "pdf" ou "csv" (défaut: pdf)
+                filename = file_info.get('filename')
+                
+                if not file_type or not filename:
+                    missing_files.append({
+                        "file": file_info,
+                        "error": "Type ou filename manquant"
+                    })
+                    continue
+                
+                # Sécurité : utiliser basename
+                safe_filename = os.path.basename(filename)
+                
+                # Déterminer le chemin selon le type et le format
+                if file_type == "convocation":
+                    if file_format == "pdf":
+                        base_dir = PDF_DIR  # results/convocations
+                        filepath = os.path.join(base_dir, f"session_{session_id}", safe_filename)
+                        zip_folder = "convocations/pdf"
+                    elif file_format == "csv":
+                        base_dir = os.path.join('results', 'convocation_csv')
+                        filepath = os.path.join(base_dir, f"session_{session_id}", safe_filename)
+                        zip_folder = "convocations/csv"
+                    else:
+                        missing_files.append({
+                            "file": file_info,
+                            "error": f"Format inconnu: {file_format}"
+                        })
+                        continue
+                        
+                elif file_type == "affectation":
+                    if file_format == "pdf":
+                        base_dir = RESULTS_DIR  # results/affectations
+                        filepath = os.path.join(base_dir, f"session_{session_id}", safe_filename)
+                        zip_folder = "affectations/pdf"
+                    elif file_format == "csv":
+                        base_dir = os.path.join('results', 'affectation_csv')
+                        filepath = os.path.join(base_dir, f"session_{session_id}", safe_filename)
+                        zip_folder = "affectations/csv"
+                    else:
+                        missing_files.append({
+                            "file": file_info,
+                            "error": f"Format inconnu: {file_format}"
+                        })
+                        continue
+                else:
+                    missing_files.append({
+                        "file": file_info,
+                        "error": f"Type inconnu: {file_type}"
+                    })
+                    continue
+                
+                # Vérifier que le fichier existe
+                if not os.path.exists(filepath):
+                    missing_files.append({
+                        "file": file_info,
+                        "error": "Fichier non trouvé",
+                        "path": filepath
+                    })
+                    continue
+                
+                # Ajouter le fichier au ZIP avec un dossier organisé
+                arcname = os.path.join(zip_folder, safe_filename)
+                zip_file.write(filepath, arcname)
+                added_files.append(safe_filename)
+        
+        # Si aucun fichier n'a été ajouté
+        if len(added_files) == 0:
+            return jsonify({
+                "success": False,
+                "error": "Aucun fichier trouvé",
+                "missing_files": missing_files
+            }), 404
+        
+        # Préparer le buffer pour l'envoi
+        zip_buffer.seek(0)
+        
+        # Nom du fichier ZIP
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        zip_filename = f"fichiers_session_{session_id}_{timestamp}.zip"
+        
+        return send_file(
+            zip_buffer,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=zip_filename
+        )
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+# ========== ENDPOINTS CSV - LISTE ET TÉLÉCHARGEMENT ==========
+
+@affectation_bp.route('/csv/convocations/list/<int:session_id>', methods=['GET'])
+def list_convocations_csv(session_id):
+    """
+    GET /api/affectations/csv/convocations/list/<session_id>
+    Liste tous les fichiers CSV de convocations disponibles pour une session
+    
+    Returns:
+        JSON avec la liste des fichiers CSV de convocations
+    """
+    try:
+        csv_dir = os.path.join('results', 'convocation_csv', f'session_{session_id}')
+        
+        if not os.path.exists(csv_dir):
+            return jsonify({
+                "success": False,
+                "error": f"Aucun CSV de convocation trouvé pour la session {session_id}",
+                "path": csv_dir
+            }), 404
+        
+        files = []
+        for filename in os.listdir(csv_dir):
+            if filename.endswith('.csv'):
+                filepath = os.path.join(csv_dir, filename)
+                file_stat = os.stat(filepath)
+                files.append({
+                    "filename": filename,
+                    "size": file_stat.st_size,
+                    "created": datetime.fromtimestamp(file_stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
+                    "download_url": f"/api/affectations/csv/convocations/download/{session_id}/{filename}"
+                })
+        
+        return jsonify({
+            "success": True,
+            "session_id": session_id,
+            "count": len(files),
+            "files": files
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@affectation_bp.route('/csv/convocations/download/<int:session_id>/<path:filename>', methods=['GET'])
+def download_convocation_csv(session_id, filename):
+    """
+    GET /api/affectations/csv/convocations/download/<session_id>/<filename>
+    Télécharge un fichier CSV de convocation spécifique
+    
+    Args:
+        session_id: ID de la session
+        filename: Nom du fichier CSV
+        
+    Returns:
+        Fichier CSV
+    """
+    try:
+        # Sécurité : utiliser basename
+        safe_filename = os.path.basename(filename)
+        
+        csv_dir = os.path.join('results', 'convocation_csv', f'session_{session_id}')
+        filepath = os.path.join(csv_dir, safe_filename)
+        
+        if not os.path.exists(filepath):
+            return jsonify({
+                "success": False,
+                "error": "Fichier CSV non trouvé",
+                "path": filepath
+            }), 404
+        
+        return send_file(
+            filepath,
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=safe_filename
+        )
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@affectation_bp.route('/csv/affectations/list/<int:session_id>', methods=['GET'])
+def list_affectations_csv(session_id):
+    """
+    GET /api/affectations/csv/affectations/list/<session_id>
+    Liste tous les fichiers CSV d'affectations disponibles pour une session
+    
+    Returns:
+        JSON avec la liste des fichiers CSV d'affectations
+    """
+    try:
+        csv_dir = os.path.join('results', 'affectation_csv', f'session_{session_id}')
+        
+        if not os.path.exists(csv_dir):
+            return jsonify({
+                "success": False,
+                "error": f"Aucun CSV d'affectation trouvé pour la session {session_id}",
+                "path": csv_dir
+            }), 404
+        
+        files = []
+        for filename in os.listdir(csv_dir):
+            if filename.endswith('.csv'):
+                filepath = os.path.join(csv_dir, filename)
+                file_stat = os.stat(filepath)
+                files.append({
+                    "filename": filename,
+                    "size": file_stat.st_size,
+                    "created": datetime.fromtimestamp(file_stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
+                    "download_url": f"/api/affectations/csv/affectations/download/{session_id}/{filename}"
+                })
+        
+        return jsonify({
+            "success": True,
+            "session_id": session_id,
+            "count": len(files),
+            "files": files
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@affectation_bp.route('/csv/affectations/download/<int:session_id>/<path:filename>', methods=['GET'])
+def download_affectation_csv(session_id, filename):
+    """
+    GET /api/affectations/csv/affectations/download/<session_id>/<filename>
+    Télécharge un fichier CSV d'affectation spécifique
+    
+    Args:
+        session_id: ID de la session
+        filename: Nom du fichier CSV
+        
+    Returns:
+        Fichier CSV
+    """
+    try:
+        # Sécurité : utiliser basename
+        safe_filename = os.path.basename(filename)
+        
+        csv_dir = os.path.join('results', 'affectation_csv', f'session_{session_id}')
+        filepath = os.path.join(csv_dir, safe_filename)
+        
+        if not os.path.exists(filepath):
+            return jsonify({
+                "success": False,
+                "error": "Fichier CSV non trouvé",
+                "path": filepath
+            }), 404
+        
+        return send_file(
+            filepath,
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=safe_filename
+        )
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
 # Créer le dossier pour les affectations
 RESULTS_DIR = 'results/affectations'
 
