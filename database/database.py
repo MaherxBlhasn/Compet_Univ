@@ -24,44 +24,37 @@ def remplir_responsables_absents(id_session):
     Remplit la table responsable_absent_jour_examen pour les responsables qui ne sont pas présents le jour de leur examen
     """
     db = get_db()
-    # Récupérer tous les créneaux où il y a un responsable
-    creneaux_resp = db.execute('''
-        SELECT creneau_id, dateExam, h_debut, h_fin, cod_salle, enseignant as responsable
-        FROM creneau
-        WHERE id_session = ? AND enseignant IS NOT NULL
+    # Supprimer les anciennes entrées pour cette session
+    db.execute('DELETE FROM responsable_absent_jour_examen WHERE id_session = ?', (id_session,))
+    # Récupérer tous les responsables absents et compter le nombre de créneaux
+    rows = db.execute('''
+        SELECT c.enseignant as responsable, COUNT(*) as nbre_creneaux
+        FROM creneau c
+        LEFT JOIN affectation a ON c.creneau_id = a.creneau_id AND a.code_smartex_ens = c.enseignant AND a.id_session = c.id_session
+        WHERE c.id_session = ? AND c.enseignant IS NOT NULL AND a.code_smartex_ens IS NULL
+        GROUP BY c.enseignant
     ''', (id_session,)).fetchall()
-    for creneau in creneaux_resp:
-        resp_code = creneau['responsable']
-        # Vérifier si le responsable a une affectation le jour de son examen
-        affectation = db.execute('''
-            SELECT 1 FROM affectation
-            WHERE id_session = ? AND code_smartex_ens = ? AND creneau_id = ?
-        ''', (id_session, resp_code, creneau['creneau_id'])).fetchone()
-        if not affectation:
-            # Récupérer les infos de l'enseignant
-            ens = db.execute('''
-                SELECT participe_surveillance, nom_ens, prenom_ens
-                FROM enseignant
-                WHERE code_smartex_ens = ?
-            ''', (resp_code,)).fetchone()
-            participe_surveillance = ens['participe_surveillance'] if ens else 0
-            nom = ens['nom_ens'] if ens else ''
-            prenom = ens['prenom_ens'] if ens else ''
-            # Insérer dans la table responsable_absent_jour_examen
-            db.execute('''
-                INSERT INTO responsable_absent_jour_examen (
-                    id_session, code_smartex_ens, creneau_id, date_exam, h_debut, h_fin, cod_salle, participe_surveillance, nom, prenom
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                id_session,
-                resp_code,
-                creneau['creneau_id'],
-                creneau['dateExam'],
-                creneau['h_debut'],
-                creneau['h_fin'],
-                creneau['cod_salle'],
-                participe_surveillance,
-                nom,
-                prenom
-            ))
+    for row in rows:
+        resp_code = row['responsable']
+        nbre_creneaux = row['nbre_creneaux']
+        ens = db.execute('''
+            SELECT participe_surveillance, nom_ens, prenom_ens
+            FROM enseignant
+            WHERE code_smartex_ens = ?
+        ''', (resp_code,)).fetchone()
+        participe_surveillance = ens['participe_surveillance'] if ens else 0
+        nom = ens['nom_ens'] if ens else ''
+        prenom = ens['prenom_ens'] if ens else ''
+        db.execute('''
+            INSERT INTO responsable_absent_jour_examen (
+                id_session, code_smartex_ens, participe_surveillance, nom, prenom, nbre_creneaux
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            id_session,
+            resp_code,
+            participe_surveillance,
+            nom,
+            prenom,
+            nbre_creneaux
+        ))
     db.commit()

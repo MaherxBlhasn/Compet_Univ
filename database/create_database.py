@@ -243,14 +243,9 @@ def create_database():
             nom TEXT NOT NULL,
             prenom TEXT NOT NULL,
             participe_surveillance INTEGER NOT NULL,
-            date_exam TEXT NOT NULL,
-            h_debut TEXT NOT NULL,
-            h_fin TEXT NOT NULL,
-            cod_salle TEXT,
-            creneau_id INTEGER NOT NULL,
+            nbre_creneaux INTEGER NOT NULL,
             FOREIGN KEY (id_session) REFERENCES session(id_session),
-            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens),
-            FOREIGN KEY (creneau_id) REFERENCES creneau(creneau_id)
+            FOREIGN KEY (code_smartex_ens) REFERENCES enseignant(code_smartex_ens)
         )
     """)
     print("✅ Table 'responsable_absent_jour_examen' créée")
