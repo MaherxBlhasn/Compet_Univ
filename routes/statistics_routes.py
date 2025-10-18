@@ -112,47 +112,7 @@ def _get_base_statistics(db, id_session):
         WHERE id_session = ? AND cod_salle IS NOT NULL
     ''', (id_session,)).fetchone()['count']
     
-    # 3. Jours de la session
-    jours = db.execute('''
-        SELECT DISTINCT dateExam
-        FROM creneau
-        WHERE id_session = ?
-        ORDER BY dateExam
-    ''', (id_session,)).fetchall()
-    
-    nombre_jours = len(jours)
-    
-    # Créneaux par jour
-    creneaux_par_jour = {}
-    for jour_row in jours:
-        date = jour_row['dateExam']
-        count = db.execute('''
-            SELECT COUNT(DISTINCT creneau_id) as count
-            FROM creneau
-            WHERE id_session = ? AND dateExam = ?
-        ''', (id_session, date)).fetchone()['count']
-        creneaux_par_jour[date] = count
-    
-    # Séances par jour (basé sur jour_seance si existe)
-    seances_par_jour = {}
-    seances_rows = db.execute('''
-        SELECT 
-            jour_num,
-            date_examen,
-            COUNT(*) as nb_seances
-        FROM jour_seance
-        WHERE id_session = ?
-        GROUP BY jour_num, date_examen
-        ORDER BY jour_num
-    ''', (id_session,)).fetchall()
-    
-    for row in seances_rows:
-        seances_par_jour[f"Jour {row['jour_num']}"] = {
-            'date': row['date_examen'],
-            'nb_seances': row['nb_seances']
-        }
-    
-    # 4. Voeux
+    # 3. Voeux
     total_voeux = db.execute('''
         SELECT COUNT(*) as count
         FROM voeu
@@ -182,13 +142,7 @@ def _get_base_statistics(db, id_session):
         },
         'creneaux': {
             'total': total_creneaux,
-            'salles_uniques': salles_uniques,
-            'par_jour': creneaux_par_jour
-        },
-        'jours': {
-            'nombre': nombre_jours,
-            'dates': [dict(j) for j in jours],
-            'seances': seances_par_jour
+            'salles': salles_uniques
         },
         'voeux': {
             'total': total_voeux,
