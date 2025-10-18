@@ -1025,6 +1025,9 @@ def permuter_affectations():
         ''', (id2,)).fetchone()
         if not aff1 or not aff2:
             return jsonify({'error': 'Affectation(s) non trouvée(s).'}), 404
+        # Impossible de permuter si même enseignant
+        if aff1['code_smartex_ens'] == aff2['code_smartex_ens']:
+            return jsonify({'error': 'Impossible de permuter : les deux affectations concernent le même enseignant.'}), 400
         # Vérifier que les deux affectations sont dans la même session
         if aff1['id_session'] != aff2['id_session']:
             return jsonify({'error': 'Impossible de permuter : les deux affectations ne sont pas dans la même session.'}), 400
