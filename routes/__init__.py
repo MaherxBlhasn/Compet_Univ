@@ -13,6 +13,7 @@ def init_routes(app):
     from routes.quota_enseignant_routes import quota_enseignant_bp
     from routes.salle_par_creneau_routes import salle_par_creneau_bp
     from routes.statistics_routes import statistics_bp
+    from routes.storage_routes import storage_bp
     
     app.register_blueprint(grade_bp, url_prefix='/api/grades')
     app.register_blueprint(session_bp, url_prefix='/api/sessions')
@@ -25,3 +26,4 @@ def init_routes(app):
     app.register_blueprint(quota_enseignant_bp, url_prefix='/api/quota-enseignants')
     app.register_blueprint(salle_par_creneau_bp, url_prefix='/api/salles-par-creneau')
     app.register_blueprint(statistics_bp, url_prefix='/api/statistics')
+    app.register_blueprint(storage_bp, url_prefix='/api/storage')
