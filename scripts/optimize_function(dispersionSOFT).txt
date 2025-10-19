@@ -1,0 +1,514 @@
+def optimize_surveillance_scheduling(
+    enseignants_df,
+    planning_df,
+    salles_df,
+    voeux_df,
+    parametres_df,
+    mapping_df,
+    salle_par_creneau_df,
+    adjusted_quotas
+):
+    """
+    Optimisation principale avec hiérarchie de contraintes
+    
+    CONTRAINTES HARD (Obligatoires) :
+    - H1 : Couverture complète des créneaux
+    - H2C : Responsable ne surveille pas sa propre salle
+    - H3A : Respect des quotas maximum (ajustés)
+    
+    CONTRAINTES SOFT (Par ordre de priorité décroissante) :
+    - S1 : Équité ABSOLUE par grade (poids 1000) - PRIORITÉ MAXIMALE
+    - S2 : Respect des vœux (poids 100)
+    - S3 : Minimisation écarts quotas (poids 10)
+    - S4 : Dispersion dans la journée (poids 5)
+    - S5 : Priorité quotas ajustés (poids 8)
+    - S6 : Présence responsables (poids 1)
+    """
+    print("\n" + "="*60)
+    print("DÉMARRAGE DE L'OPTIMISATION OR-TOOLS CP-SAT")
+    print("AVEC ÉQUITÉ ABSOLUE PRIORITAIRE SUR VŒUX")
+    print("="*60)
+    
+    salle_responsable = build_salle_responsable_mapping(planning_df)
+    creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df)
+    creneaux = map_creneaux_to_jours_seances(creneaux, mapping_df)
+    creneau_responsables = build_creneau_responsables_mapping(creneaux)
+    teachers = build_teachers_dict(enseignants_df, parametres_df, adjusted_quotas)
+    voeux_set = build_voeux_set(voeux_df)
+    
+    print("\n=== ÉTAPE 5 : Création du modèle CP-SAT ===")
+    
+    teacher_codes = [c for c, t in teachers.items() if t['participe']]
+    creneau_ids = [cid for cid, c in creneaux.items() if c['jour'] is not None]
+    
+    # Grouper par grade pour contrainte d'équité (S1)
+    teachers_by_grade = {}
+    for tcode in teacher_codes:
+        grade = teachers[tcode]['grade']
+        if grade not in teachers_by_grade:
+            teachers_by_grade[grade] = []
+        teachers_by_grade[grade].append(tcode)
+    
+    # Trier par priorité ajustée
+    teachers_by_priority = sorted(
+        teacher_codes,
+        key=lambda t: (
+            teachers[t]['priorite_ajustee'],
+            teachers[t]['priorite_grade']
+        )
+    )
+    
+    print(f"\n📊 Ordre de priorité (5 premiers) :")
+    for i, tcode in enumerate(teachers_by_priority[:5], 1):
+        t = teachers[tcode]
+        print(f"   {i}. {t['nom']} {t['prenom']} ({t['grade']}) - "
+              f"Quota: {t['quota']} "
+              f"(Prio ajustée: {t['priorite_ajustee']})")
+    
+    model = cp_model.CpModel()
+    
+    # =========================================================================
+    # CRÉATION DES VARIABLES DE DÉCISION
+    # =========================================================================
+    print("\n=== Création des variables de décision ===")
+    print("Variables créées : x[(enseignant, créneau)] = 0 ou 1")
+    print("Exclusions appliquées :")
+    print("  - H2C : Responsable ne peut pas surveiller sa propre salle")
+    print("  - Les vœux NE sont PAS exclus (gérés en SOFT)")
+    
+    x = {}
+    
+    nb_vars = 0
+    nb_exclusions_responsable = 0
+    
+    for tcode in teacher_codes:
+        for cid in creneau_ids:
+            cre = creneaux[cid]
+            
+            # CONTRAINTE H2C : L'enseignant ne peut surveiller que les salles
+            # dont il n'est PAS responsable dans ce créneau
+            salles_disponibles = []
+            
+            for salle_info in cre['salles_info']:
+                salle = salle_info['salle']
+                responsable = salle_info['responsable']
+                
+                if responsable != tcode:
+                    salles_disponibles.append(salle)
+            
+            if not salles_disponibles:
+                # L'enseignant est responsable de TOUTES les salles
+                nb_exclusions_responsable += 1
+                continue
+            
+            x[(tcode, cid)] = model.NewBoolVar(f"x_{tcode}_{cid}")
+            nb_vars += 1
+    
+    print(f"\n✓ {nb_vars:,} variables créées")
+    print(f"✓ {nb_exclusions_responsable:,} exclusions (responsable - H2C)")
+    print(f"⚠️  Vœux et équité gérés en SOFT (aucune exclusion)")
+    
+    # =========================================================================
+    # CONTRAINTES HARD (OBLIGATOIRES)
+    # =========================================================================
+    print("\n" + "="*60)
+    print("AJOUT DES CONTRAINTES HARD (OBLIGATOIRES)")
+    print("="*60)
+    
+    # -------------------------------------------------------------------------
+    # CONTRAINTE HARD H1 : COUVERTURE COMPLÈTE DES CRÉNEAUX
+    # -------------------------------------------------------------------------
+    # Chaque créneau doit avoir EXACTEMENT le nombre requis de surveillants
+    # (2 titulaires par salle + 4 réserves par créneau)
+    print("\n[HARD H1] Couverture complète des créneaux")
+    print("Description : Chaque créneau reçoit exactement le nombre requis de surveillants")
+    
+    for cid in creneau_ids:
+        vars_creneau = [x[(t, cid)] for t in teacher_codes if (t, cid) in x]
+        required = creneaux[cid]['nb_surveillants']
+        model.Add(sum(vars_creneau) == required)
+    
+    print(f"✓ H1 : {len(creneau_ids)} créneaux couverts exactement")
+    
+    # -------------------------------------------------------------------------
+    # CONTRAINTE HARD H3A : RESPECT DES QUOTAS MAXIMUM (AJUSTÉS)
+    # -------------------------------------------------------------------------
+    # Aucun enseignant ne peut dépasser son quota maximum
+    # Les quotas sont ajustés selon l'historique de la session précédente
+    print("\n[HARD H3A] Respect des quotas maximum (avec quotas ajustés)")
+    print("Description : Aucun enseignant ne dépasse son quota maximum")
+    print("              Les quotas tiennent compte de l'historique précédent")
+    
+    for tcode in teacher_codes:
+        vars_teacher = [x[(tcode, cid)] for cid in creneau_ids if (tcode, cid) in x]
+        quota = teachers[tcode]['quota']
+        
+        if vars_teacher:
+            model.Add(sum(vars_teacher) <= quota)
+    
+    print(f"✓ H3A : {len(teacher_codes)} enseignants limités à leur quota (ajusté)")
+    
+    # =========================================================================
+    # CONTRAINTES SOFT (OPTIMISATION PAR ORDRE DE PRIORITÉ)
+    # =========================================================================
+    print("\n" + "="*60)
+    print("AJOUT DES CONTRAINTES SOFT (OPTIMISATION)")
+    print("="*60)
+    
+    # -------------------------------------------------------------------------
+    # CONTRAINTE SOFT S1 : ÉQUITÉ ABSOLUE PAR GRADE (PRIORITÉ MAXIMALE)
+    # -------------------------------------------------------------------------
+    # Tous les enseignants d'un même grade doivent avoir EXACTEMENT le même
+    # nombre de surveillances (différence = 0)
+    # Poids 1000 = PRIORITÉ MAXIMALE
+    print("\n[SOFT S1] Équité ABSOLUE par grade (différence = 0, poids 1000)")
+    print("Description : Tous les enseignants d'un même grade ont exactement")
+    print("              le même nombre de surveillances")
+    print("Priorité    : MAXIMALE (poids 1000)")
+    print("Comportement: Le solver minimisera en priorité toute différence")
+    
+    equite_penalties = []
+    
+    for grade, tcodes_grade in teachers_by_grade.items():
+        if len(tcodes_grade) <= 1:
+            continue
+        
+        # Pour chaque paire d'enseignants du même grade
+        for i in range(len(tcodes_grade)):
+            for j in range(i + 1, len(tcodes_grade)):
+                t1 = tcodes_grade[i]
+                t2 = tcodes_grade[j]
+                
+                vars_t1 = [x[(t1, cid)] for cid in creneau_ids if (t1, cid) in x]
+                vars_t2 = [x[(t2, cid)] for cid in creneau_ids if (t2, cid) in x]
+                
+                if vars_t1 and vars_t2:
+                    nb_t1 = model.NewIntVar(0, len(creneau_ids), f"nb_eq_{t1}")
+                    nb_t2 = model.NewIntVar(0, len(creneau_ids), f"nb_eq_{t2}")
+                    
+                    model.Add(nb_t1 == sum(vars_t1))
+                    model.Add(nb_t2 == sum(vars_t2))
+                    
+                    # Calculer la différence absolue
+                    diff = model.NewIntVar(-len(creneau_ids), len(creneau_ids), 
+                                          f"diff_{t1}_{t2}")
+                    model.Add(diff == nb_t1 - nb_t2)
+                    
+                    abs_diff = model.NewIntVar(0, len(creneau_ids), f"abs_diff_{t1}_{t2}")
+                    model.AddAbsEquality(abs_diff, diff)
+                    
+                    equite_penalties.append(abs_diff)
+    
+    print(f"✓ S1 : {len(equite_penalties)} pénalités d'équité (PRIORITÉ MAXIMALE)")
+    
+    # -------------------------------------------------------------------------
+    # CONTRAINTE SOFT S2 : RESPECT DES VŒUX
+    # -------------------------------------------------------------------------
+    # Les vœux de non-surveillance sont respectés autant que possible
+    # Poids 100 = PRIORITÉ HAUTE (mais inférieure à l'équité)
+    print("\n[SOFT S2] Respect des vœux (priorité haute, poids 100)")
+    print("Description : Les vœux de non-surveillance sont respectés autant que possible")
+    print("Priorité    : HAUTE (poids 100) - inférieure à l'équité")
+    print("Comportement: Si nécessaire pour l'équité, un vœu peut être non respecté")
+    
+    voeux_penalties = []
+    
+    for tcode in teacher_codes:
+        for cid in creneau_ids:
+            if (tcode, cid) not in x:
+                continue
+            
+            cre = creneaux[cid]
+            
+            # Si l'enseignant a un vœu de non-surveillance pour ce créneau
+            if (tcode, cre['jour'], cre['seance']) in voeux_set:
+                # Créer une pénalité si l'enseignant est affecté malgré son vœu
+                voeu_penalty = model.NewIntVar(0, 100, f"voeu_penalty_{tcode}_{cid}")
+                
+                # Pénalité de 100 si affecté malgré le vœu
+                model.Add(voeu_penalty == 100).OnlyEnforceIf(x[(tcode, cid)])
+                model.Add(voeu_penalty == 0).OnlyEnforceIf(x[(tcode, cid)].Not())
+                
+                voeux_penalties.append(voeu_penalty)
+    
+    print(f"✓ S2 : {len(voeux_penalties)} pénalités de non-respect des vœux")
+    
+    # -------------------------------------------------------------------------
+    # CONTRAINTE SOFT S3 : DISPERSION DANS LA MÊME JOURNÉE
+    # -------------------------------------------------------------------------
+    # Éviter d'avoir des surveillances trop espacées dans la même journée
+    # (ex: éviter S1 et S4 le même jour sans S2 ou S3)
+    # Poids 5 = PRIORITÉ MOYENNE
+    print("\n[SOFT S3] Dispersion des surveillances dans la même journée (poids 5)")
+    print("Description : Évite les surveillances trop espacées dans la même journée")
+    print("Priorité    : MOYENNE (poids 5)")
+    print("Exemple     : Pénalise S1+S4 sans S2/S3 le même jour")
+    
+    dispersion_penalties = []
+    
+    for tcode in teacher_codes:
+        creneaux_by_jour = {}
+        for cid in creneau_ids:
+            if (tcode, cid) in x:
+                jour = creneaux[cid]['jour']
+                if jour not in creneaux_by_jour:
+                    creneaux_by_jour[jour] = []
+                creneaux_by_jour[jour].append(cid)
+        
+        for jour, cids_jour in creneaux_by_jour.items():
+            if len(cids_jour) <= 1:
+                continue
+            
+            seances_info = []
+            for cid in cids_jour:
+                seance_num = get_seance_number(creneaux[cid]['seance'])
+                if seance_num is not None:
+                    seances_info.append((cid, seance_num))
+            
+            for i in range(len(seances_info)):
+                for j in range(i + 1, len(seances_info)):
+                    cid1, s1 = seances_info[i]
+                    cid2, s2 = seances_info[j]
+                    
+                    gap = abs(s2 - s1)
+                    if gap > 1:
+                        both_assigned = model.NewBoolVar(f"both_{tcode}_{cid1}_{cid2}")
+                        model.Add(both_assigned == 1).OnlyEnforceIf([x[(tcode, cid1)], x[(tcode, cid2)]])
+                        model.Add(both_assigned == 0).OnlyEnforceIf([x[(tcode, cid1)].Not()])
+                        model.Add(both_assigned == 0).OnlyEnforceIf([x[(tcode, cid2)].Not()])
+                        
+                        penalty = model.NewIntVar(0, gap * 10, f"penalty_{tcode}_{cid1}_{cid2}")
+                        model.Add(penalty == gap * 10).OnlyEnforceIf(both_assigned)
+                        model.Add(penalty == 0).OnlyEnforceIf(both_assigned.Not())
+                        
+                        dispersion_penalties.append(penalty)
+    
+    print(f"✓ S3 : {len(dispersion_penalties)} pénalités de dispersion")
+    
+    # -------------------------------------------------------------------------
+    # CONTRAINTE SOFT S4 : PRÉFÉRENCE POUR RESPONSABLES DISPONIBLES
+    # -------------------------------------------------------------------------
+    # Préférence (légère) pour que les responsables soient présents dans leurs salles
+    # Poids 1 = PRIORITÉ FAIBLE
+    print("\n[SOFT S4] Préférence pour présence responsables (poids 1)")
+    print("Description : Préférence légère pour que les responsables soient présents")
+    print("Priorité    : FAIBLE (poids 1)")
+    print("Comportement: Contraint souple, facilement sacrifiée pour autres objectifs")
+    
+    presence_penalties = []
+    
+    for cid in creneau_ids:
+        for salle, responsable in creneau_responsables[cid].items():
+            if responsable is None or responsable not in teacher_codes:
+                continue
+            
+            if (responsable, cid) in x:
+                absence_penalty = model.NewIntVar(0, 100, f"resp_penalty_{responsable}_{cid}")
+                
+                model.Add(absence_penalty == 0).OnlyEnforceIf(x[(responsable, cid)])
+                model.Add(absence_penalty == 50).OnlyEnforceIf(x[(responsable, cid)].Not())
+                
+                presence_penalties.append(absence_penalty)
+    
+    print(f"✓ S4 : {len(presence_penalties)} pénalités de présence responsable (souple)")
+    
+    # -------------------------------------------------------------------------
+    # CONTRAINTE SOFT S5 : PRIORITÉ AUX QUOTAS AJUSTÉS FAIBLES
+    # -------------------------------------------------------------------------
+    # Les enseignants avec quotas ajustés faibles (qui ont moins surveillé avant)
+    # sont priorisés pour surveiller moins
+    # Poids 8 = PRIORITÉ MOYENNE-FAIBLE
+    print("\n[SOFT S5] Priorité pour enseignants avec quotas ajustés faibles (poids 8)")
+    print("Description : Les enseignants qui ont moins surveillé auparavant")
+    print("              sont priorisés pour surveiller moins cette fois")
+    print("Priorité    : MOYENNE-FAIBLE (poids 8)")
+    
+    priority_penalties = []
+    
+    for tcode in teacher_codes:
+        if not teachers[tcode]['has_adjusted_quota']:
+            continue
+        
+        vars_teacher = [x[(tcode, cid)] for cid in creneau_ids if (tcode, cid) in x]
+        
+        if vars_teacher:
+            nb_aff = model.NewIntVar(0, len(creneau_ids), f"nb_aff_prio_{tcode}")
+            model.Add(nb_aff == sum(vars_teacher))
+            
+            quota_ajuste = teachers[tcode]['quota']
+            penalty_coef = max(1, 20 - quota_ajuste)
+            
+            penalty = model.NewIntVar(0, len(creneau_ids) * penalty_coef, 
+                                     f"prio_penalty_{tcode}")
+            model.Add(penalty == nb_aff * penalty_coef)
+            
+            priority_penalties.append(penalty)
+    
+    print(f"✓ S5 : {len(priority_penalties)} pénalités de priorité basées sur quotas ajustés")
+    
+    # =========================================================================
+    # DÉFINITION DE LA FONCTION OBJECTIF
+    # =========================================================================
+    print("\n" + "="*60)
+    print("DÉFINITION DE LA FONCTION OBJECTIF")
+    print("="*60)
+    print("\nHiérarchie des poids (du plus important au moins important) :")
+    print("  1. Équité absolue grade      : poids 1000 (PRIORITÉ MAXIMALE)")
+    print("  2. Respect vœux              : poids 100")
+    print("  3. Écarts aux quotas         : poids 10")
+    print("  4. Priorités quotas ajustés  : poids 8")
+    print("  5. Dispersion journalière    : poids 5")
+    print("  6. Présence responsables     : poids 1")
+    
+    objective_terms = []
+    
+    # 1. PRIORITÉ MAXIMALE : Équité absolue par grade (poids 1000)
+    for penalty in equite_penalties:
+        objective_terms.append(penalty * 1000)
+    
+    # 2. PRIORITÉ HAUTE : Pénalités de non-respect des vœux (poids 100)
+    for penalty in voeux_penalties:
+        objective_terms.append(penalty * 100)
+    
+    # 3. Écarts individuels par rapport aux quotas (poids 10)
+    for tcode in teacher_codes:
+        vars_teacher = [x[(tcode, cid)] for cid in creneau_ids if (tcode, cid) in x]
+        
+        if vars_teacher:
+            quota = teachers[tcode]['quota']
+            nb_aff = model.NewIntVar(0, len(creneau_ids), f"nb_aff_{tcode}")
+            model.Add(nb_aff == sum(vars_teacher))
+            
+            delta = model.NewIntVar(-len(creneau_ids), len(creneau_ids), f"delta_{tcode}")
+            model.Add(delta == nb_aff - quota)
+            
+            abs_delta = model.NewIntVar(0, len(creneau_ids), f"abs_{tcode}")
+            model.AddAbsEquality(abs_delta, delta)
+            
+            objective_terms.append(abs_delta * 10)
+    
+    # 4. Pénalités de priorité basées sur quotas ajustés (poids 8)
+    for penalty in priority_penalties:
+        objective_terms.append(penalty * 8)
+    
+    # 5. Pénalités de dispersion (poids 5)
+    for penalty in dispersion_penalties:
+        objective_terms.append(penalty * 5)
+    
+    # 6. Pénalités de présence responsable (poids 1)
+    for penalty in presence_penalties:
+        objective_terms.append(penalty * 1)
+    
+    model.Minimize(sum(objective_terms))
+    
+    print(f"\n✓ Fonction objectif définie avec {len(objective_terms)} termes :")
+    print(f"   - Équité absolue grade (poids 1000) : {len(equite_penalties)} termes")
+    print(f"   - Respect vœux (poids 100)          : {len(voeux_penalties)} termes")
+    print(f"   - Écarts quotas (poids 10)          : {len(teacher_codes)} termes")
+    print(f"   - Priorités ajustées (poids 8)      : {len(priority_penalties)} termes")
+    print(f"   - Dispersion (poids 5)              : {len(dispersion_penalties)} termes")
+    print(f"   - Présence responsables (poids 1)   : {len(presence_penalties)} termes")
+    
+    # =========================================================================
+    # RÉSOLUTION DU PROBLÈME
+    # =========================================================================
+    print("\n" + "="*60)
+    print("RÉSOLUTION DU PROBLÈME")
+    print("="*60)
+    
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 180
+    solver.parameters.num_search_workers = 8
+    solver.parameters.log_search_progress = True
+    
+    print("\nParamètres du solver :")
+    print(f"  - Temps maximum      : 180 secondes")
+    print(f"  - Nombre de workers  : 8")
+    print(f"  - Logs activés       : Oui")
+    
+    status = solver.Solve(model)
+    
+    print(f"\n✓ Statut : {solver.StatusName(status)}")
+    print(f"✓ Temps de résolution : {solver.WallTime():.2f}s")
+    
+    affectations = []
+    
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        print("\n" + "="*60)
+        print("EXTRACTION DE LA SOLUTION")
+        print("="*60)
+        
+        for (tcode, cid), var in x.items():
+            if solver.Value(var) == 1:
+                t = teachers[tcode]
+                c = creneaux[cid]
+                
+                affectations.append({
+                    'code_smartex_ens': tcode,
+                    'nom_ens': t['nom'],
+                    'prenom_ens': t['prenom'],
+                    'grade_code_ens': t['grade'],
+                    'quota_utilise': t['quota'],
+                    'quota_ajuste': t['has_adjusted_quota'],
+                    'creneau_id': cid,
+                    'jour': c['jour'],
+                    'seance': c['seance'],
+                    'date': c['date'],
+                    'h_debut': c['h_debut'],
+                    'h_fin': c['h_fin'],
+                    'cod_salle': None
+                })
+        
+        print(f"✓ {len(affectations)} affectations extraites")
+        
+        # Statistiques sur l'utilisation des quotas ajustés
+        with_adjusted = sum(1 for a in affectations if a['quota_ajuste'])
+        print(f"✓ {with_adjusted} affectations avec quotas ajustés")
+        
+        # Vérification de l'équité par grade
+        print("\n📊 Vérification de l'équité par grade :")
+        print("-" * 60)
+        aff_by_grade = {}
+        for aff in affectations:
+            grade = aff['grade_code_ens']
+            code = aff['code_smartex_ens']
+            if grade not in aff_by_grade:
+                aff_by_grade[grade] = {}
+            if code not in aff_by_grade[grade]:
+                aff_by_grade[grade][code] = 0
+            aff_by_grade[grade][code] += 1
+        
+        for grade in sorted(aff_by_grade.keys()):
+            counts = list(aff_by_grade[grade].values())
+            min_c = min(counts)
+            max_c = max(counts)
+            avg_c = sum(counts) / len(counts)
+            diff = max_c - min_c
+            
+            status_eq = "✓ PARFAIT" if diff == 0 else f"⚠️ ÉCART={diff}"
+            print(f"{grade:5s} : {min_c:2d}-{max_c:2d} (moy: {avg_c:4.1f}) | {status_eq}")
+        
+        print("-" * 60)
+        
+        affectations = assign_rooms_equitable(affectations, creneaux, planning_df)
+        
+    else:
+        print("\n" + "="*60)
+        print("❌ AUCUNE SOLUTION TROUVÉE")
+        print("="*60)
+        if status == cp_model.INFEASIBLE:
+            print("Le problème est INFAISABLE")
+            print("Suggestions :")
+            print("  - Vérifier que le nombre total de surveillants disponibles est suffisant")
+            print("  - Vérifier les quotas maximum par grade")
+            print("  - Essayer de réduire les contraintes HARD")
+        elif status == cp_model.MODEL_INVALID:
+            print("Le modèle est INVALIDE")
+            print("Contacter l'administrateur du système")
+    
+    return {
+        'status': 'ok' if status in (cp_model.OPTIMAL, cp_model.FEASIBLE) else 'infeasible',
+        'solver_status': solver.StatusName(status),
+        'solve_time': solver.WallTime(),
+        'affectations': affectations
+    }

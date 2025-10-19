@@ -46,19 +46,21 @@ def get_all_quotas():
         return jsonify({'error': str(e)}), 500
 
 
-@quota_enseignant_bp.route('/all', methods=['DELETE'])
+@quota_enseignant_bp.route('/<int:quota_id>', methods=['DELETE'])
 def delete_quota(quota_id):
     """DELETE /api/quota-enseignants/<id> - Supprimer un quota d'enseignant"""
     try:
         db = get_db()
         cursor = db.execute('DELETE FROM quota_enseignant WHERE id = ?', (quota_id,))
         db.commit()
-        
+
         if cursor.rowcount == 0:
             return jsonify({'error': 'Quota non trouvé'}), 404
+        
         return jsonify({'message': 'Quota supprimé avec succès'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
 
 
 @quota_enseignant_bp.route('/all', methods=['DELETE'])
