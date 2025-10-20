@@ -127,11 +127,15 @@ def load_data_from_db(session_id):
     """Charger toutes les données depuis la base de données"""
     print("\n" + "="*60)
     print("CHARGEMENT DES DONNÉES DEPUIS SQLite")
+    print(f"SESSION ID : {session_id}")
     print("="*60)
+    
+    import time
+    start_time = time.time()
     
     conn = get_db_connection()
     
-    # 1. Charger les enseignants
+    # 1. Charger les enseignants (tous, pas filtré par session)
     print("\n📊 Chargement des enseignants...")
     enseignants_df = pd.read_sql_query("""
         SELECT 
@@ -195,7 +199,7 @@ def load_data_from_db(session_id):
     """, conn, params=(session_id,))
     print(f"✓ {len(voeux_df)} vœux chargés")
     
-    # 6. Charger les paramètres de grades
+    # 6. Charger les paramètres de grades (tous, pas filtré par session)
     print("\n⚙️ Chargement des paramètres de grades...")
     parametres_df = pd.read_sql_query("""
         SELECT 
@@ -232,7 +236,9 @@ def load_data_from_db(session_id):
     
     conn.close()
     
-    print("\n✓ Toutes les données chargées depuis SQLite")
+    elapsed = time.time() - start_time
+    print(f"\n✓ Toutes les données chargées depuis SQLite en {elapsed:.2f}s")
+    print(f"✓ Données de la session {session_id} uniquement")
     
     return enseignants_df, planning_df, salles_df, voeux_df, parametres_df, mapping_df, salle_par_creneau_df, adjusted_quotas
 
@@ -678,6 +684,9 @@ def optimize_surveillance_scheduling(
     Args:
         nb_reserves_dynamique: Nombre de réserves par créneau (None = automatique)
     """
+    import time
+    opt_start_time = time.time()
+    
     print("\n" + "="*60)
     print("DÉMARRAGE DE L'OPTIMISATION OR-TOOLS CP-SAT")
     print("AVEC ÉQUITÉ ABSOLUE PAR GRADE EN CONTRAINTE HARD")
@@ -694,10 +703,19 @@ def optimize_surveillance_scheduling(
     teachers = build_teachers_dict(enseignants_df, parametres_df, adjusted_quotas)
     voeux_set = build_voeux_set(voeux_df)
     
+    prep_time = time.time() - opt_start_time
+    print(f"\n⏱️  Temps de préparation : {prep_time:.2f}s")
+    
     print("\n=== ÉTAPE 5 : Création du modèle CP-SAT ===")
     
     teacher_codes = [c for c, t in teachers.items() if t['participe']]
     creneau_ids = [cid for cid, c in creneaux.items() if c['jour'] is not None]
+    
+    print(f"\n📊 Taille du problème :")
+    print(f"   - Enseignants participants : {len(teacher_codes)}")
+    print(f"   - Créneaux à couvrir       : {len(creneau_ids)}")
+    print(f"   - Variables max possibles  : {len(teacher_codes) * len(creneau_ids):,}")
+    print(f"   - Vœux de non-surveillance : {len(voeux_set)}")
     
     # Grouper par grade pour contrainte d'équité (H4)
     teachers_by_grade = {}
@@ -1066,6 +1084,8 @@ def optimize_surveillance_scheduling(
     
     model.Minimize(sum(objective_terms))
     
+    model_creation_time = time.time() - opt_start_time - prep_time
+    print(f"\n⏱️  Temps de création du modèle : {model_creation_time:.2f}s")
     print(f"\n✓ Fonction objectif définie avec {len(objective_terms)} termes :")
     print(f"   - Respect vœux (poids 100)          : {len(voeux_penalties)} termes")
     print(f"   - Concentration jours (poids 50)    : {len(concentration_penalties)} termes")
@@ -1085,15 +1105,27 @@ def optimize_surveillance_scheduling(
     solver.parameters.num_search_workers = 8
     solver.parameters.log_search_progress = True
     
+    # OPTIMISATIONS DE PERFORMANCE
+    # Stratégie de recherche optimisée pour problèmes d'affectation
+    solver.parameters.cp_model_presolve = True
+    solver.parameters.linearization_level = 2
+    solver.parameters.cp_model_probing_level = 2
+    
     print("\nParamètres du solver :")
     print(f"  - Temps maximum      : 180 secondes")
     print(f"  - Nombre de workers  : 8")
     print(f"  - Logs activés       : Oui")
+    print(f"  - Prétraitement      : Activé (probing level 2)")
+    print(f"  - Linéarisation      : Niveau 2")
     
     status = solver.Solve(model)
     
+    solve_time_only = solver.WallTime()
+    total_time = time.time() - opt_start_time
+    
     print(f"\n✓ Statut : {solver.StatusName(status)}")
-    print(f"✓ Temps de résolution : {solver.WallTime():.2f}s")
+    print(f"✓ Temps de résolution pure : {solve_time_only:.2f}s")
+    print(f"✓ Temps total (préparation + modèle + résolution) : {total_time:.2f}s")
     
     affectations = []
     
