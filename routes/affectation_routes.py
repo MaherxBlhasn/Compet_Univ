@@ -520,7 +520,7 @@ def generate_convocations(id_session):
             rows = cursor.fetchall()
 
             # Créer le PDF dans le dossier de la session
-            pdf_path = os.path.join(session_pdf_dir, f"convocation_{nom}_{prenom}_{id_session}.pdf")
+            pdf_path = os.path.join(session_pdf_dir, f"convocation_{code}_{nom}_{prenom}_{id_session}.pdf")
             doc = SimpleDocTemplate(pdf_path, pagesize=A4, 
                                    leftMargin=50, rightMargin=50,
                                    topMargin=100, bottomMargin=80)
@@ -2016,7 +2016,7 @@ def generate_convocations_csv(session_id):
             ens_df = aff_df[aff_df['code_smartex_ens'] == code].copy()
             nom = ens_df.iloc[0]['nom_ens']
             prenom = ens_df.iloc[0]['prenom_ens']
-            out = os.path.join(convocation_csv_dir, f'convocation_{nom}_{prenom}_session_{session_id}.csv')
+            out = os.path.join(convocation_csv_dir, f'convocation_{code}_{nom}_{prenom}_session_{session_id}.csv')
             ens_df.to_csv(out, index=False, encoding='utf-8')
             files_generated.append(out)
             convocations_generated += 1
