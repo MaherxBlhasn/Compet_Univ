@@ -891,56 +891,67 @@ def optimize_surveillance_scheduling(
     print(f"✓ S1 : {len(voeux_penalties)} pénalités de non-respect des vœux")
     
     # -------------------------------------------------------------------------
-    # CONTRAINTE SOFT S2 : DISPERSION DANS LA MÊME JOURNÉE
+    # CONTRAINTE SOFT S2 : CONCENTRATION SUR LE MINIMUM DE JOURS
     # -------------------------------------------------------------------------
-    # Éviter d'avoir des surveillances trop espacées dans la même journée
-    # (ex: éviter S1 et S4 le même jour sans S2 ou S3)
-    # Poids 5 = PRIORITÉ MOYENNE
-    print("\n[SOFT S2] Dispersion des surveillances dans la même journée (poids 5)")
-    print("Description : Évite les surveillances trop espacées dans la même journée")
-    print("Priorité    : MOYENNE (poids 5)")
-    print("Exemple     : Pénalise S1+S4 sans S2/S3 le même jour")
+    # Privilégier la concentration des surveillances sur le minimum de jours possible
+    # au lieu de les disperser sur plusieurs jours
+    # Poids 50 = PRIORITÉ TRÈS HAUTE (plus important que l'espacement dans une journée)
+    print("\n[SOFT S2] Concentration sur le minimum de jours (poids 50)")
+    print("Description : Concentre les surveillances sur le minimum de jours possible")
+    print("Priorité    : TRÈS HAUTE (poids 50)")
+    print("Exemple     : Préfère 4 séances sur 1 jour plutôt que 2+1+1 sur 3 jours")
     
-    dispersion_penalties = []
+    concentration_penalties = []
+    
+    # Identifier tous les jours uniques
+    all_jours = set()
+    for cid in creneau_ids:
+        jour = creneaux[cid]['jour']
+        if jour is not None:
+            all_jours.add(jour)
     
     for tcode in teacher_codes:
-        creneaux_by_jour = {}
-        for cid in creneau_ids:
-            if (tcode, cid) in x:
-                jour = creneaux[cid]['jour']
-                if jour not in creneaux_by_jour:
-                    creneaux_by_jour[jour] = []
-                creneaux_by_jour[jour].append(cid)
+        # Créer des variables booléennes pour chaque jour
+        # jour_used[j] = 1 si l'enseignant a au moins une surveillance le jour j
+        jour_used = {}
         
-        for jour, cids_jour in creneaux_by_jour.items():
-            if len(cids_jour) <= 1:
-                continue
+        for jour in all_jours:
+            jour_var = model.NewBoolVar(f"jour_used_{tcode}_{jour}")
+            jour_used[jour] = jour_var
             
-            seances_info = []
-            for cid in cids_jour:
-                seance_num = get_seance_number(creneaux[cid]['seance'])
-                if seance_num is not None:
-                    seances_info.append((cid, seance_num))
+            # Récupérer tous les créneaux de ce jour pour cet enseignant
+            creneaux_jour = [cid for cid in creneau_ids 
+                            if (tcode, cid) in x and creneaux[cid]['jour'] == jour]
             
-            for i in range(len(seances_info)):
-                for j in range(i + 1, len(seances_info)):
-                    cid1, s1 = seances_info[i]
-                    cid2, s2 = seances_info[j]
-                    
-                    gap = abs(s2 - s1)
-                    if gap > 1:
-                        both_assigned = model.NewBoolVar(f"both_{tcode}_{cid1}_{cid2}")
-                        model.Add(both_assigned == 1).OnlyEnforceIf([x[(tcode, cid1)], x[(tcode, cid2)]])
-                        model.Add(both_assigned == 0).OnlyEnforceIf([x[(tcode, cid1)].Not()])
-                        model.Add(both_assigned == 0).OnlyEnforceIf([x[(tcode, cid2)].Not()])
-                        
-                        penalty = model.NewIntVar(0, gap * 10, f"penalty_{tcode}_{cid1}_{cid2}")
-                        model.Add(penalty == gap * 10).OnlyEnforceIf(both_assigned)
-                        model.Add(penalty == 0).OnlyEnforceIf(both_assigned.Not())
-                        
-                        dispersion_penalties.append(penalty)
+            if creneaux_jour:
+                # Si au moins un créneau est affecté ce jour, jour_used = 1
+                # Sinon jour_used = 0
+                vars_jour = [x[(tcode, cid)] for cid in creneaux_jour]
+                
+                # jour_used = 1 si au moins une surveillance ce jour
+                # On utilise une contrainte : jour_used >= x[i] pour tout i du jour
+                for var in vars_jour:
+                    model.Add(jour_var >= var)
+                
+                # jour_used <= somme des x[i] (si aucun x[i], alors jour_used = 0)
+                model.Add(jour_var <= sum(vars_jour))
+        
+        # Créer une pénalité basée sur le nombre total de jours utilisés
+        # Plus on utilise de jours, plus la pénalité est élevée
+        if jour_used:
+            nb_jours_utilises = model.NewIntVar(0, len(all_jours), 
+                                                f"nb_jours_{tcode}")
+            model.Add(nb_jours_utilises == sum(jour_used.values()))
+            
+            # Pénalité proportionnelle au nombre de jours
+            # Chaque jour supplémentaire coûte 100 points
+            penalty = model.NewIntVar(0, len(all_jours) * 100, 
+                                     f"concentration_penalty_{tcode}")
+            model.Add(penalty == nb_jours_utilises * 100)
+            
+            concentration_penalties.append(penalty)
     
-    print(f"✓ S2 : {len(dispersion_penalties)} pénalités de dispersion")
+    print(f"✓ S2 : {len(concentration_penalties)} pénalités de concentration par enseignant")
     
     # -------------------------------------------------------------------------
     # CONTRAINTE SOFT S3 : PRÉFÉRENCE POUR RESPONSABLES DISPONIBLES
@@ -1011,20 +1022,24 @@ def optimize_surveillance_scheduling(
     print("="*60)
     print("\nHiérarchie des poids (du plus important au moins important) :")
     print("  1. Respect vœux              : poids 100")
-    print("  2. Écarts aux quotas         : poids 10")
-    print("  3. Priorités quotas ajustés  : poids 8")
-    print("  4. Dispersion journalière    : poids 5")
+    print("  2. Concentration jours       : poids 50")
+    print("  3. Écarts aux quotas         : poids 10")
+    print("  4. Priorités quotas ajustés  : poids 8")
     print("  5. Présence responsables     : poids 1")
     print("\nNOTE: L'équité absolue par grade est maintenant une contrainte HARD")
     print("      Elle sera satisfaite ou le problème sera INFAISABLE")
     
     objective_terms = []
     
-    # 1. PRIORITÉ HAUTE : Pénalités de non-respect des vœux (poids 100)
+    # 1. PRIORITÉ TRÈS HAUTE : Pénalités de non-respect des vœux (poids 100)
     for penalty in voeux_penalties:
         objective_terms.append(penalty * 100)
     
-    # 2. Écarts individuels par rapport aux quotas (poids 10)
+    # 2. PRIORITÉ HAUTE : Concentration sur minimum de jours (poids 50)
+    for penalty in concentration_penalties:
+        objective_terms.append(penalty * 50)
+    
+    # 3. Écarts individuels par rapport aux quotas (poids 10)
     for tcode in teacher_codes:
         vars_teacher = [x[(tcode, cid)] for cid in creneau_ids if (tcode, cid) in x]
         
@@ -1045,11 +1060,7 @@ def optimize_surveillance_scheduling(
     for penalty in priority_penalties:
         objective_terms.append(penalty * 8)
     
-    # 4. Pénalités de dispersion (poids 5)
-    for penalty in dispersion_penalties:
-        objective_terms.append(penalty * 5)
-    
-    # 5. Pénalités de présence responsable (poids 1)
+    # 4. Pénalités de présence responsable (poids 1)
     for penalty in presence_penalties:
         objective_terms.append(penalty * 1)
     
@@ -1057,9 +1068,9 @@ def optimize_surveillance_scheduling(
     
     print(f"\n✓ Fonction objectif définie avec {len(objective_terms)} termes :")
     print(f"   - Respect vœux (poids 100)          : {len(voeux_penalties)} termes")
+    print(f"   - Concentration jours (poids 50)    : {len(concentration_penalties)} termes")
     print(f"   - Écarts quotas (poids 10)          : {len(teacher_codes)} termes")
     print(f"   - Priorités ajustées (poids 8)      : {len(priority_penalties)} termes")
-    print(f"   - Dispersion (poids 5)              : {len(dispersion_penalties)} termes")
     print(f"   - Présence responsables (poids 1)   : {len(presence_penalties)} termes")
     
     # =========================================================================
@@ -1545,13 +1556,14 @@ def main():
     
     print("\nCONTRAINTES APPLIQUÉES :")
     print("   [HARD H1] ✓ Couverture complète des créneaux")
-    print("   [HARD H2A] ✓ Équité stricte par grade (écart ≤ 1)")
-    print("   [HARD H2B] ✓ Respect strict des vœux")
     print("   [HARD H2C] ✓ Responsable ne surveille pas sa propre salle")
     print("   [HARD H3A] ✓ Respect des quotas maximum (AJUSTÉS)")
-    print("   [SOFT S1] ✓ Dispersion optimisée dans la journée")
-    print("   [SOFT S2] ✓ Préférence pour présence responsables (souple)")
-    print("   [SOFT S3] ✓ Priorité pour quotas ajustés faibles (NOUVEAU)")
+    print("   [HARD H4] ✓ Équité absolue par grade (différence = 0)")
+    print("   [SOFT S1] ✓ Respect des vœux (poids 100)")
+    print("   [SOFT S2] ✓ Concentration sur minimum de jours (poids 50)")
+    print("   [SOFT S3] ✓ Écarts aux quotas (poids 10)")
+    print("   [SOFT S4] ✓ Priorité quotas ajustés faibles (poids 8)")
+    print("   [SOFT S5] ✓ Préférence présence responsables (poids 1)")
     print("="*60 + "\n")
 
 
