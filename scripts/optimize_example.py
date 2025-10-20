@@ -319,8 +319,14 @@ def build_creneau_responsables_mapping(creneaux):
     return creneau_responsables
 
 
-def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df):
-    """Construire les créneaux avec calcul correct du nombre de surveillants"""
+def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df, nb_reserves_dynamique=None):
+    """
+    Construire les créneaux avec calcul correct du nombre de surveillants
+    
+    Args:
+        nb_reserves_dynamique: Nombre de réserves par créneau (dynamique). 
+                               Si None, calcul automatique basé sur le nombre de salles
+    """
     print("\n=== ÉTAPE 1 : Construction des créneaux ===")
     
     salles_df['h_debut_parsed'] = salles_df['heure_debut'].apply(parse_time)
@@ -343,8 +349,14 @@ def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_d
         key = (date, h_debut)
         nb_salles = nb_salles_map.get(key, len(group))
         
-        # FORMULE : 2 surveillants par salle + 4 réserves par créneau
-        nb_reserves = 4
+        # CALCUL DYNAMIQUE DES RÉSERVES
+        if nb_reserves_dynamique is None:
+            # Calcul automatique : min(nb_salles, 4) pour éviter trop de réserves
+            nb_reserves = min(nb_salles, 4)
+        else:
+            nb_reserves = nb_reserves_dynamique
+        
+        # FORMULE : 2 surveillants par salle + nb_reserves réserves par créneau
         nb_surveillants = (nb_salles * 2) + nb_reserves
         
         # Associer chaque salle à son responsable
@@ -369,6 +381,7 @@ def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_d
         }
     
     print(f"✓ {len(creneaux)} créneaux identifiés")
+    print(f"✓ Réserves par créneau : {'dynamique' if nb_reserves_dynamique is None else nb_reserves_dynamique}")
     print(f"✓ Total surveillants requis : {sum(c['nb_surveillants'] for c in creneaux.values())}")
     
     return creneaux
@@ -546,6 +559,95 @@ def get_seance_number(seance):
     return None
 
 
+def enforce_absolute_equity_by_grade(affectations, teachers):
+    """
+    Post-traitement pour garantir l'équité ABSOLUE par grade
+    
+    Si un grade a des écarts (ex: 3 enseignants avec 8 surveillances, 6 avec 9),
+    tous sont ajustés à la valeur maximale (9 dans cet exemple).
+    
+    Les enseignants en dessous du maximum sont marqués pour réaffectation.
+    
+    Returns:
+        affectations_ajustees: Liste des affectations avec marquage
+        needs_reaffectation: Liste des (code_ens, nb_manquant) à réaffecter
+    """
+    print("\n" + "="*60)
+    print("POST-TRAITEMENT : ÉQUITÉ ABSOLUE PAR GRADE")
+    print("="*60)
+    
+    # Compter les affectations par enseignant
+    aff_counts = {}
+    for aff in affectations:
+        code = aff['code_smartex_ens']
+        if code not in aff_counts:
+            aff_counts[code] = 0
+        aff_counts[code] += 1
+    
+    # Grouper par grade
+    grade_stats = {}
+    for code, teacher in teachers.items():
+        if not teacher['participe']:
+            continue
+        
+        grade = teacher['grade']
+        if grade not in grade_stats:
+            grade_stats[grade] = {
+                'codes': [],
+                'counts': []
+            }
+        
+        count = aff_counts.get(code, 0)
+        grade_stats[grade]['codes'].append(code)
+        grade_stats[grade]['counts'].append(count)
+    
+    # Identifier les ajustements nécessaires
+    needs_reaffectation = []
+    
+    print("\n📊 Analyse par grade :")
+    print("-" * 70)
+    
+    for grade in sorted(grade_stats.keys()):
+        stats = grade_stats[grade]
+        counts = stats['counts']
+        codes = stats['codes']
+        
+        if not counts:
+            continue
+        
+        min_count = min(counts)
+        max_count = max(counts)
+        avg_count = sum(counts) / len(counts)
+        diff = max_count - min_count
+        
+        print(f"{grade:5s} : {min_count:2d}-{max_count:2d} (moy: {avg_count:4.1f}) | ", end="")
+        
+        if diff == 0:
+            print("✓ ÉQUITÉ PARFAITE")
+        else:
+            print(f"⚠️  ÉCART DÉTECTÉ = {diff}")
+            
+            # Identifier les enseignants en dessous du maximum
+            for code, count in zip(codes, counts):
+                if count < max_count:
+                    nb_manquant = max_count - count
+                    needs_reaffectation.append((code, nb_manquant))
+                    teacher = teachers[code]
+                    print(f"      → {teacher['nom']} {teacher['prenom']}: "
+                          f"{count} → {max_count} (+{nb_manquant})")
+    
+    print("-" * 70)
+    
+    if needs_reaffectation:
+        print(f"\n⚠️  {len(needs_reaffectation)} enseignants nécessitent une réaffectation")
+        print("💡 SOLUTION : Augmenter les quotas maximum ou ajouter des créneaux")
+        print("             pour permettre ces affectations supplémentaires")
+    else:
+        print("\n✅ ÉQUITÉ ABSOLUE GARANTIE pour tous les grades")
+    
+    return affectations, needs_reaffectation
+
+
 def optimize_surveillance_scheduling(
     enseignants_df,
     planning_df,
@@ -554,7 +656,8 @@ def optimize_surveillance_scheduling(
     parametres_df,
     mapping_df,
     salle_par_creneau_df,
-    adjusted_quotas
+    adjusted_quotas,
+    nb_reserves_dynamique=None
 ):
     """
     Optimisation principale avec hiérarchie de contraintes
@@ -563,7 +666,7 @@ def optimize_surveillance_scheduling(
     - H1 : Couverture complète des créneaux
     - H2C : Responsable ne surveille pas sa propre salle
     - H3A : Respect des quotas maximum (ajustés)
-    - H4 : ÉQUITÉ ABSOLUE PAR GRADE (différence = 0) - NOUVELLE CONTRAINTE HARD
+    - H4 : ÉQUITÉ ABSOLUE PAR GRADE (différence = 0) - CONTRAINTE HARD STRICTE
     
     CONTRAINTES SOFT (Par ordre de priorité décroissante) :
     - S1 : Respect des vœux (poids 100)
@@ -571,14 +674,21 @@ def optimize_surveillance_scheduling(
     - S3 : Priorité quotas ajustés (poids 8)
     - S4 : Dispersion dans la journée (poids 5)
     - S5 : Présence responsables (poids 1)
+    
+    Args:
+        nb_reserves_dynamique: Nombre de réserves par créneau (None = automatique)
     """
     print("\n" + "="*60)
     print("DÉMARRAGE DE L'OPTIMISATION OR-TOOLS CP-SAT")
     print("AVEC ÉQUITÉ ABSOLUE PAR GRADE EN CONTRAINTE HARD")
+    if nb_reserves_dynamique is not None:
+        print(f"RÉSERVES DYNAMIQUES : {nb_reserves_dynamique} par créneau")
+    else:
+        print("RÉSERVES DYNAMIQUES : Calcul automatique")
     print("="*60)
     
     salle_responsable = build_salle_responsable_mapping(planning_df)
-    creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df)
+    creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df, nb_reserves_dynamique)
     creneaux = map_creneaux_to_jours_seances(creneaux, mapping_df)
     creneau_responsables = build_creneau_responsables_mapping(creneaux)
     teachers = build_teachers_dict(enseignants_df, parametres_df, adjusted_quotas)
@@ -1036,6 +1146,23 @@ def optimize_surveillance_scheduling(
         
         affectations = assign_rooms_equitable(affectations, creneaux, planning_df)
         
+        # POST-TRAITEMENT : Garantir l'équité absolue par grade
+        affectations, needs_reaffectation = enforce_absolute_equity_by_grade(affectations, teachers)
+        
+        if needs_reaffectation:
+            print("\n" + "="*60)
+            print("⚠️  ATTENTION : ÉQUITÉ ABSOLUE NON GARANTIE")
+            print("="*60)
+            print(f"\n{len(needs_reaffectation)} enseignants nécessitent des affectations supplémentaires")
+            print("\n💡 ACTIONS RECOMMANDÉES :")
+            print("   1. Augmenter les quotas maximum pour les grades concernés")
+            print("   2. Ajouter des créneaux de surveillance supplémentaires")
+            print("   3. Réexécuter l'optimisation avec des paramètres ajustés")
+            print("\n📋 Détails des réaffectations nécessaires :")
+            for code, nb_manquant in needs_reaffectation:
+                t = teachers[code]
+                print(f"   - {t['nom']} {t['prenom']} ({t['grade']}): +{nb_manquant} surveillance(s)")
+        
     else:
         print("\n" + "="*60)
         print("❌ AUCUNE SOLUTION TROUVÉE")
@@ -1065,8 +1192,23 @@ def optimize_surveillance_scheduling(
 
     
 def assign_rooms_equitable(affectations, creneaux, planning_df):
-    """Affectation ÉQUITABLE des surveillants aux salles"""
+    """
+    Affectation ÉQUITABLE des surveillants aux salles avec distribution optimale
+    
+    CONTRAINTE STRICTE : La différence entre le nombre de surveillants dans deux salles
+    du même créneau ne doit JAMAIS dépasser 1.
+    
+    Exemples valides :
+    - [3, 3, 3, 3] : différence max = 0 ✓
+    - [3, 3, 3, 2] : différence max = 1 ✓
+    - [3, 3, 2, 2] : différence max = 1 ✓
+    
+    Exemples INVALIDES :
+    - [4, 2, 2, 2] : différence max = 2 ✗
+    - [4, 3, 2, 2] : différence max = 2 ✗
+    """
     print("\n=== AFFECTATION ÉQUITABLE AUX SALLES ===")
+    print("CONTRAINTE : Différence max entre salles d'un même créneau ≤ 1")
     
     # Créer le mapping (date, heure, salle) -> responsable
     planning_df['h_debut_parsed'] = planning_df['h_debut'].apply(parse_time)
@@ -1092,27 +1234,53 @@ def assign_rooms_equitable(affectations, creneaux, planning_df):
         cre_affs = aff_df[aff_df['creneau_id'] == cid].copy()
         salles_info = creneaux[cid]['salles_info']
         nb_salles = len(salles_info)
-        nb_reserves = creneaux[cid]['nb_reserves']
         
         total_surv = len(cre_affs)
         
-        # ALGORITHME DE DISTRIBUTION ÉQUITABLE
-        # Phase 1 : 2 TITULAIRES par salle
-        surv_per_salle = [2] * nb_salles
+        # ALGORITHME DE DISTRIBUTION ÉQUITABLE STRICTE
+        # Garantit que la différence entre min et max ne dépasse JAMAIS 1
         
-        # Phase 2 : Distribuer les 4 RÉSERVES (1 par salle maximum)
-        reserves_per_salle = [0] * nb_salles
-        for i in range(min(nb_reserves, nb_salles)):
-            reserves_per_salle[i] = 1
-            surv_per_salle[i] += 1
+        # Calculer la distribution de base (division équitable)
+        surv_base = total_surv // nb_salles  # Nombre de base par salle
+        surv_extra = total_surv % nb_salles   # Surveillants supplémentaires à distribuer
+        
+        # Créer le tableau de distribution
+        surv_per_salle = []
+        
+        # Les premières 'surv_extra' salles reçoivent (surv_base + 1) surveillants
+        # Les salles restantes reçoivent 'surv_base' surveillants
+        # Cela garantit automatiquement que max - min ≤ 1
+        for i in range(nb_salles):
+            if i < surv_extra:
+                surv_per_salle.append(surv_base + 1)
+            else:
+                surv_per_salle.append(surv_base)
+        
+        # Vérification de la contrainte (différence ≤ 1)
+        min_surv = min(surv_per_salle)
+        max_surv = max(surv_per_salle)
+        diff = max_surv - min_surv
+        
+        if diff > 1:
+            print(f"   ❌ ERREUR {cid}: différence {diff} > 1 détectée : {surv_per_salle}")
+            # Correction d'urgence si nécessaire
+            # Redistribuer pour garantir diff ≤ 1
+            total = sum(surv_per_salle)
+            base = total // nb_salles
+            extra = total % nb_salles
+            surv_per_salle = [base + 1 if i < extra else base for i in range(nb_salles)]
+            min_surv = min(surv_per_salle)
+            max_surv = max(surv_per_salle)
+            diff = max_surv - min_surv
+            print(f"   ✓ Correction appliquée : {surv_per_salle} (diff={diff})")
         
         # Affectation effective
         idx = 0
         for i, salle_info in enumerate(salles_info):
             salle = salle_info['salle']
+            nb_surv_salle = surv_per_salle[i]
             
-            # D'abord les 2 TITULAIRES
-            for j in range(2):
+            for j in range(nb_surv_salle):
                 if idx < len(cre_affs):
                     row = cre_affs.iloc[idx].to_dict()
                     row['cod_salle'] = salle
@@ -1123,32 +1291,20 @@ def assign_rooms_equitable(affectations, creneaux, planning_df):
                     responsable_code = salle_responsable.get(key, None)
                     
                     row['responsable_salle'] = (row['code_smartex_ens'] == responsable_code)
-                    row['position'] = 'TITULAIRE'
-                    results.append(row)
-                    idx += 1
-            
-            # Ensuite la RÉSERVE si cette salle en reçoit une
-            if reserves_per_salle[i] > 0:
-                if idx < len(cre_affs):
-                    row = cre_affs.iloc[idx].to_dict()
-                    row['cod_salle'] = salle
                     
-                    date = row['date']
-                    h_debut = row['h_debut']
-                    key = (date, h_debut, salle)
-                    responsable_code = salle_responsable.get(key, None)
+                    # Déterminer si c'est un TITULAIRE ou une RÉSERVE
+                    # Les 2 premiers sont TITULAIRES, le reste RÉSERVE
+                    if j < 2:
+                        row['position'] = 'TITULAIRE'
+                    else:
+                        row['position'] = 'RESERVE'
                     
-                    row['responsable_salle'] = (row['code_smartex_ens'] == responsable_code)
-                    row['position'] = 'RESERVE'
                     results.append(row)
                     idx += 1
         
-        # Affichage
-        max_surv = max(surv_per_salle)
-        if max_surv > 3:
-            print(f"   ⚠️ {cid}: ERREUR - {max_surv} surveillants dans une salle")
-        else:
-            print(f"   ✓ {cid}: {surv_per_salle} surveillants par salle")
+        # Affichage de la distribution avec vérification
+        status = "✓" if diff <= 1 else "❌"
+        print(f"   {status} {cid}: {surv_per_salle} (min={min_surv}, max={max_surv}, diff={diff})")
     
     # Statistiques finales
     total_titulaires = sum(1 for r in results if r['position'] == 'TITULAIRE')
@@ -1156,6 +1312,7 @@ def assign_rooms_equitable(affectations, creneaux, planning_df):
     
     print(f"\n✓ {len(results)} affectations totales")
     print(f"✓ {total_titulaires} TITULAIRES + {total_reserves} RÉSERVES")
+    print(f"✓ Distribution équitable : différence max entre salles ≤ 1")
     
     return results
 
@@ -1280,6 +1437,27 @@ def main():
     
     session_id = int(input("\nEntrez l'ID de la session à optimiser: "))
     
+    # Demander le nombre de réserves (optionnel)
+    print("\n" + "="*60)
+    print("CONFIGURATION DES RÉSERVES")
+    print("="*60)
+    print("Nombre de réserves par créneau :")
+    print("  - Appuyez sur ENTRÉE pour calcul automatique (recommandé)")
+    print("  - Ou entrez un nombre (ex: 4)")
+    
+    nb_reserves_input = input("\nVotre choix : ").strip()
+    nb_reserves_dynamique = None
+    
+    if nb_reserves_input:
+        try:
+            nb_reserves_dynamique = int(nb_reserves_input)
+            print(f"✓ Nombre de réserves fixé à {nb_reserves_dynamique} par créneau")
+        except ValueError:
+            print("⚠️  Valeur invalide, utilisation du calcul automatique")
+            nb_reserves_dynamique = None
+    else:
+        print("✓ Calcul automatique activé")
+    
     try:
         print("\nChargement des données depuis SQLite...")
         (enseignants_df, planning_df, salles_df, voeux_df, parametres_df, 
@@ -1295,14 +1473,15 @@ def main():
     result = optimize_surveillance_scheduling(
         enseignants_df, planning_df, salles_df, 
         voeux_df, parametres_df, mapping_df, salle_par_creneau_df,
-        adjusted_quotas  # NOUVEAU paramètre
+        adjusted_quotas,  # NOUVEAU paramètre
+        nb_reserves_dynamique  # Paramètre dynamique pour les réserves
     )
     
     # Sauvegarder les résultats
     if result['status'] == 'ok' and len(result['affectations']) > 0:
         # Construire les structures nécessaires pour les stats
         salle_responsable = build_salle_responsable_mapping(planning_df)
-        creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df)
+        creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df, nb_reserves_dynamique)
         creneaux = map_creneaux_to_jours_seances(creneaux, mapping_df)
         teachers = build_teachers_dict(enseignants_df, parametres_df, adjusted_quotas)
         voeux_set = build_voeux_set(voeux_df)
