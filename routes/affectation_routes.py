@@ -169,6 +169,22 @@ def delete_all_affectations():
         return jsonify({'message': 'Toutes les affectations ont été supprimées.'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
+@affectation_bp.route('/delete-by-session/<int:id_session>', methods=['DELETE'])
+def delete_affectations_by_session(id_session):
+    """DELETE /api/affectations/delete-by-session/<id_session> - Supprimer toutes les affectations d'une session donnée"""
+    try:
+        db = get_db()
+        cursor = db.execute('DELETE FROM affectation WHERE id_session = ?', (id_session,))
+        db.commit()
+
+        if cursor.rowcount > 0:
+            return jsonify({'message': f'Toutes les affectations de la session {id_session} ont été supprimées.'}), 200
+        else:
+            return jsonify({'message': f'Aucune affectation trouvée pour la session {id_session}.'}), 404
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @affectation_bp.route('/enseignant/<int:code_smartex_ens>', methods=['GET'])
 def get_affectations_enseignant(code_smartex_ens):
