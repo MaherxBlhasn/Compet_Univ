@@ -30,7 +30,14 @@ def get_session(id_session):
 
 @session_bp.route('', methods=['POST'])
 def create_session():
-    """POST /api/sessions - Créer une session"""
+    """
+    POST /api/sessions - Créer une session
+    
+    Les dates (date_debut et date_fin) seront automatiquement calculées
+    lors de l'import des créneaux :
+    - date_debut = première date des créneaux (min de dateExam)
+    - date_fin = dernière date des créneaux (max de dateExam)
+    """
     try:
         data = request.get_json()
         if not data or 'libelle_session' not in data:
@@ -39,15 +46,16 @@ def create_session():
         db = get_db()
         cursor = db.execute('''
             INSERT INTO session (libelle_session, date_debut, date_fin, AU, Semestre, type_session)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, NULL, NULL, ?, ?, ?)
         ''', (data['libelle_session'], 
-              data.get('date_debut'), 
-              data.get('date_fin'),
               data.get('AU'),
               data.get('Semestre'),
               data.get('type_session')))
         db.commit()
-        return jsonify({'message': 'Session créée avec succès', 'id_session': cursor.lastrowid}), 201
+        return jsonify({
+            'message': 'Session créée avec succès. Les dates seront calculées automatiquement lors de l\'import des créneaux.',
+            'id_session': cursor.lastrowid
+        }), 201
     except sqlite3.IntegrityError:
         return jsonify({'error': 'Une session avec ce libellé existe déjà'}), 409
     except Exception as e:

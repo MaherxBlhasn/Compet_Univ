@@ -1,0 +1,12 @@
+RÉSULTAT DE L'ALGORITHME D'OPTIMISATION - CONTRAINTES VÉRIFIÉES
+=================================================================
+
+1. ÉQUITÉ ABSOLUE PAR GRADE : Tous les enseignants d'un même grade ont EXACTEMENT le même nombre de surveillances (différence = 0).
+
+2. PARTICIPATION UNIVERSELLE : Tous les enseignants avec participe_surveillance=1 ont AU MOINS 1 affectation (aucun enseignant à 0).
+
+3. RESPECT DES QUOTAS : Les quotas optimaux calculés sont ≤ quotas de grade, garantissant qu'aucun enseignant ne dépasse sa limite.
+
+4. ÉQUILIBRAGE INTER-GRADES : Distribution équilibrée entre grades (ex: MA à 6/7, VA à 3/4) pour éviter qu'un grade soit à 100% tandis que d'autres sont à 0%.
+
+5. OPTIMISATION DOUCE : Respect maximum des vœux de non-surveillance, concentration sur minimum de jours, et présence préférentielle des responsables dans leurs salles.

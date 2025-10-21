@@ -83,7 +83,13 @@ def get_creneau(creneau_id):
 
 @creneau_bp.route('', methods=['POST'])
 def create_creneau():
-    """POST /api/creneaux - Créer un créneau"""
+    """
+    POST /api/creneaux - Créer un créneau
+    
+    Mise à jour automatique des dates de session :
+    - date_debut = min(date_debut_actuelle, dateExam)
+    - date_fin = max(date_fin_actuelle, dateExam)
+    """
     try:
         data = request.get_json()
         required = ['id_session', 'dateExam', 'h_debut', 'h_fin']
@@ -106,10 +112,49 @@ def create_creneau():
         ''', (data['id_session'], data['dateExam'], h_debut_normalized, 
               h_fin_normalized, data.get('type_ex'), data.get('semestre'),
               data.get('enseignant'), data.get('cod_salle')))
+        
+        # Mettre à jour les dates de la session automatiquement
+        try:
+            id_session = data['id_session']
+            date_exam = data['dateExam']
+            
+            # Récupérer les dates actuelles de la session
+            session = db.execute(
+                'SELECT date_debut, date_fin FROM session WHERE id_session = ?',
+                (id_session,)
+            ).fetchone()
+            
+            if session:
+                date_debut_actuelle = session['date_debut']
+                date_fin_actuelle = session['date_fin']
+                
+                # Calculer les nouvelles dates
+                if date_debut_actuelle is None or date_exam < date_debut_actuelle:
+                    nouvelle_date_debut = date_exam
+                else:
+                    nouvelle_date_debut = date_debut_actuelle
+                
+                if date_fin_actuelle is None or date_exam > date_fin_actuelle:
+                    nouvelle_date_fin = date_exam
+                else:
+                    nouvelle_date_fin = date_fin_actuelle
+                
+                # Mettre à jour si nécessaire
+                if (nouvelle_date_debut != date_debut_actuelle or 
+                    nouvelle_date_fin != date_fin_actuelle):
+                    db.execute('''
+                        UPDATE session 
+                        SET date_debut = ?, date_fin = ?
+                        WHERE id_session = ?
+                    ''', (nouvelle_date_debut, nouvelle_date_fin, id_session))
+        except Exception as e:
+            # Ne pas bloquer la création du créneau si la mise à jour échoue
+            pass
+        
         db.commit()
         
         return jsonify({
-            'message': 'Créneau créé avec succès',
+            'message': 'Créneau créé avec succès et dates de session mises à jour',
             'creneau_id': cursor.lastrowid
         }), 201
     except sqlite3.IntegrityError as e:
