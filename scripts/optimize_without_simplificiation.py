@@ -909,50 +909,68 @@ def optimize_surveillance_scheduling(
     print(f"✓ S1 : {len(voeux_penalties)} pénalités de non-respect des vœux")
     
     # -------------------------------------------------------------------------
-    # CONTRAINTE SOFT S2 : CONCENTRATION SUR LE MINIMUM DE JOURS (SIMPLIFIÉE)
+    # CONTRAINTE SOFT S2 : CONCENTRATION SUR LE MINIMUM DE JOURS
     # -------------------------------------------------------------------------
-    # Version simplifiée : moins de variables, calcul plus rapide
-    # Poids 50 = PRIORITÉ TRÈS HAUTE
-    print("\n[SOFT S2] Concentration sur le minimum de jours (version simplifiée, poids 50)")
+    # Privilégier la concentration des surveillances sur le minimum de jours possible
+    # au lieu de les disperser sur plusieurs jours
+    # Poids 50 = PRIORITÉ TRÈS HAUTE (plus important que l'espacement dans une journée)
+    print("\n[SOFT S2] Concentration sur le minimum de jours (poids 50)")
     print("Description : Concentre les surveillances sur le minimum de jours possible")
     print("Priorité    : TRÈS HAUTE (poids 50)")
-    print("Optimisation: Version simplifiée pour performances accrues")
+    print("Exemple     : Préfère 4 séances sur 1 jour plutôt que 2+1+1 sur 3 jours")
     
     concentration_penalties = []
     
     # Identifier tous les jours uniques
-    all_jours = sorted(set(creneaux[cid]['jour'] for cid in creneau_ids 
-                          if creneaux[cid]['jour'] is not None))
+    all_jours = set()
+    for cid in creneau_ids:
+        jour = creneaux[cid]['jour']
+        if jour is not None:
+            all_jours.add(jour)
     
     for tcode in teacher_codes:
-        # Pour chaque enseignant, compter simplement le nombre de jours différents
-        # où il a au moins une surveillance
-        jours_with_surveillance = []
+        # Créer des variables booléennes pour chaque jour
+        # jour_used[j] = 1 si l'enseignant a au moins une surveillance le jour j
+        jour_used = {}
         
         for jour in all_jours:
+            jour_var = model.NewBoolVar(f"jour_used_{tcode}_{jour}")
+            jour_used[jour] = jour_var
+            
             # Récupérer tous les créneaux de ce jour pour cet enseignant
             creneaux_jour = [cid for cid in creneau_ids 
                             if (tcode, cid) in x and creneaux[cid]['jour'] == jour]
             
             if creneaux_jour:
-                # Variable booléenne simple : ce jour est-il utilisé ?
-                jour_used = model.NewBoolVar(f"j_{tcode}_{jour}")
-                
-                # jour_used = 1 SSI au moins un créneau de ce jour est affecté
-                # Utilisation d'une contrainte maximale pour simplifier
+                # Si au moins un créneau est affecté ce jour, jour_used = 1
+                # Sinon jour_used = 0
                 vars_jour = [x[(tcode, cid)] for cid in creneaux_jour]
-                model.AddMaxEquality(jour_used, vars_jour)
                 
-                jours_with_surveillance.append(jour_used)
+                # jour_used = 1 si au moins une surveillance ce jour
+                # On utilise une contrainte : jour_used >= x[i] pour tout i du jour
+                for var in vars_jour:
+                    model.Add(jour_var >= var)
+                
+                # jour_used <= somme des x[i] (si aucun x[i], alors jour_used = 0)
+                model.Add(jour_var <= sum(vars_jour))
         
-        # Pénalité = nombre de jours utilisés * 50
-        if jours_with_surveillance:
-            penalty = model.NewIntVar(0, len(all_jours) * 50, f"conc_{tcode}")
-            model.Add(penalty == sum(jours_with_surveillance) * 50)
+        # Créer une pénalité basée sur le nombre total de jours utilisés
+        # Plus on utilise de jours, plus la pénalité est élevée
+        if jour_used:
+            nb_jours_utilises = model.NewIntVar(0, len(all_jours), 
+                                                f"nb_jours_{tcode}")
+            model.Add(nb_jours_utilises == sum(jour_used.values()))
+            
+            # Pénalité proportionnelle au nombre de jours
+            # Chaque jour supplémentaire coûte 100 points
+            penalty = model.NewIntVar(0, len(all_jours) * 100, 
+                                     f"concentration_penalty_{tcode}")
+            model.Add(penalty == nb_jours_utilises * 100)
+            
             concentration_penalties.append(penalty)
     
-    print(f"✓ S2 : {len(concentration_penalties)} pénalités (version optimisée)")
-
+    print(f"✓ S2 : {len(concentration_penalties)} pénalités de concentration par enseignant")
+    
     # -------------------------------------------------------------------------
     # CONTRAINTE SOFT S3 : PRÉFÉRENCE POUR RESPONSABLES DISPONIBLES
     # -------------------------------------------------------------------------
