@@ -128,8 +128,8 @@ def compute_quota_enseignant(affectations_df, session_id, conn):
         diff_quota_grade = quota_realise - quota_grade
         diff_quota_majoritaire = quota_realise - quota_majoritaire
         
-        # Calculer quota_ajuste (quota_grade - diff_quota_grade)
-        quota_ajuste = quota_grade - diff_quota_grade
+        # Calculer quota_ajuste (quota_grade - diff_quota_grade)(hne nhotou li nhebou)
+        quota_ajuste = quota_grade - diff_quota_majoritaire
         
         # Calculer quota_ajuste_maj (quota_grade - diff_quota_majoritaire)
         quota_ajuste_maj = quota_grade - diff_quota_majoritaire

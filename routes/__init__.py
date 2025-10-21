@@ -15,6 +15,7 @@ def init_routes(app):
     from routes.statistics_routes import statistics_bp
     from routes.storage_routes import storage_bp
     from routes.presence_routes import presence_bp
+    from routes.email_routes import email_bp
     
     app.register_blueprint(grade_bp, url_prefix='/api/grades')
     app.register_blueprint(session_bp, url_prefix='/api/sessions')
@@ -29,3 +30,4 @@ def init_routes(app):
     app.register_blueprint(statistics_bp, url_prefix='/api/statistics')
     app.register_blueprint(storage_bp, url_prefix='/api/storage')
     app.register_blueprint(presence_bp, url_prefix='/api/presence')
+    app.register_blueprint(email_bp, url_prefix='/api/email')

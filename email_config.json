@@ -1,0 +1,8 @@
+{
+    "SMTP_SERVER": "smtp.gmail.com",
+    "SMTP_PORT": 587,
+    "SMTP_USER": "imenmiladi21@gmail.com",
+    "SMTP_PASSWORD": "yahc rqrj mcst rnhi",
+    "FROM_EMAIL": "imenmiladi21@gmail.com",
+    "FROM_NAME": "ISI - Gestion des Examens"
+}

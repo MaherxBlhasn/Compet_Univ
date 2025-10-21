@@ -79,12 +79,16 @@ def diagnose_infeasibility(session_id, conn):
             'nb_surveillants': nb_surveillants
         })
     
-    # 4. Analyse de faisabilité globale
+    # 4. Calculer le quota moyen nécessaire (DÉPLACÉ ICI pour être accessible partout)
+    quota_moyen_necessaire = total_required / total_enseignants if total_enseignants > 0 else 0
+    
+    # 5. Analyse de faisabilité globale
     diagnostic['total_required'] = total_required
     diagnostic['total_capacity'] = total_capacity
     diagnostic['deficit'] = total_required - total_capacity
     diagnostic['nb_creneaux'] = nb_creneaux
     diagnostic['nb_enseignants'] = total_enseignants
+    diagnostic['quota_moyen_necessaire'] = round(quota_moyen_necessaire, 2)
     
     if total_required > total_capacity:
         diagnostic['is_feasible'] = False
@@ -97,9 +101,6 @@ def diagnose_infeasibility(session_id, conn):
             'severity': 'CRITICAL'
         })
         
-        # Quota moyen nécessaire
-        quota_moyen_necessaire = total_required / total_enseignants if total_enseignants > 0 else 0
-        
         diagnostic['reasons'].append({
             'type': 'QUOTA_MOYEN_INSUFFISANT',
             'message': f"Le quota moyen nécessaire est de {quota_moyen_necessaire:.2f} surveillances/enseignant",
@@ -108,7 +109,7 @@ def diagnose_infeasibility(session_id, conn):
             'severity': 'HIGH'
         })
     
-    # 5. Analyse par grade
+    # 6. Analyse par grade
     for _, row in capacity_df.iterrows():
         grade = row['grade_code_ens']
         nb_ens = row['nb_enseignants']
@@ -131,7 +132,7 @@ def diagnose_infeasibility(session_id, conn):
             'has_deficit': deficit_grade > 0
         }
         
-        # Calculer le quota suggéré
+        # Calculer le quota suggéré (utilise maintenant la variable déplacée)
         if total_enseignants > 0:
             quota_suggere = int(quota_moyen_necessaire) + 1
             grade_info['quota_suggere'] = quota_suggere
@@ -149,7 +150,52 @@ def diagnose_infeasibility(session_id, conn):
                 'severity': 'MEDIUM' if deficit_grade < 20 else 'HIGH'
             })
     
-    # 6. Générer des suggestions
+    # 7. Vérifier l'équité par grade (NOUVELLE ANALYSE pour contrainte H4)
+    equite_issues = []
+    
+    for _, row in capacity_df.iterrows():
+        grade = row['grade_code_ens']
+        nb_ens = row['nb_enseignants']
+        quota = row['quota']
+        
+        if nb_ens > 1:
+            # Pour que l'équité absolue soit possible, le total des surveillances
+            # pour ce grade doit être divisible par le nombre d'enseignants
+            grade_info = [g for g in diagnostic['grades_analysis'] if g['grade'] == grade][0]
+            surveillances_attendues = grade_info['surveillances_attendues']
+            
+            # Si le nombre attendu n'est pas un multiple du nombre d'enseignants
+            if surveillances_attendues % nb_ens != 0:
+                remainder = surveillances_attendues % nb_ens
+                
+                equite_issues.append({
+                    'grade': grade,
+                    'nb_enseignants': nb_ens,
+                    'surveillances_attendues': surveillances_attendues,
+                    'remainder': remainder,
+                    'message': f"Grade {grade}: {surveillances_attendues:.1f} surveillances pour {nb_ens} enseignants (reste: {remainder:.1f})"
+                })
+    
+    if equite_issues:
+        diagnostic['equite_analysis'] = equite_issues
+        
+        diagnostic['reasons'].append({
+            'type': 'EQUITE_IMPOSSIBLE',
+            'message': f"L'équité absolue par grade est IMPOSSIBLE : {len(equite_issues)} grade(s) ne peuvent avoir une distribution parfaitement égale",
+            'details': equite_issues,
+            'severity': 'CRITICAL'
+        })
+        
+        # Suggestion spécifique pour l'équité
+        diagnostic['suggestions'].insert(0, {
+            'type': 'ASSOUPLIR_EQUITE',
+            'description': "Passer la contrainte d'équité de HARD à SOFT (permettre des différences minimes)",
+            'impact': "Permettra de trouver une solution quasi-équitable au lieu d'échouer complètement",
+            'feasible_after': True,
+            'priority': 0
+        })
+    
+    # 8. Générer des suggestions
     if not diagnostic['is_feasible']:
         # Suggestion 1 : Augmenter les quotas
         quota_suggere_global = int(quota_moyen_necessaire) + 1
@@ -180,7 +226,6 @@ def diagnose_infeasibility(session_id, conn):
         })
         
         # Suggestion 3 : Recruter plus d'enseignants
-        # Vérifier combien d'enseignants ne participent pas
         non_participants_df = pd.read_sql_query("""
             SELECT 
                 grade_code_ens,
@@ -216,12 +261,12 @@ def diagnose_infeasibility(session_id, conn):
         grades_en_deficit = [g for g in diagnostic['grades_analysis'] if g['has_deficit']]
         if grades_en_deficit:
             suggestions_par_grade = []
-            gain_total_ciblé = 0
+            gain_total_cible = 0
             
             for grade_info in grades_en_deficit:
                 quota_min = int(grade_info['surveillances_attendues'] / grade_info['nb_enseignants']) + 1
                 gain = (quota_min - grade_info['quota_actuel']) * grade_info['nb_enseignants']
-                gain_total_ciblé += gain
+                gain_total_cible += gain
                 
                 suggestions_par_grade.append({
                     'grade': grade_info['grade'],
@@ -234,12 +279,12 @@ def diagnose_infeasibility(session_id, conn):
                 'type': 'AUGMENTER_QUOTAS_CIBLES',
                 'description': "Augmenter uniquement les quotas des grades en déficit",
                 'details': suggestions_par_grade,
-                'impact': f"+{gain_total_ciblé} surveillances",
-                'feasible_after': (total_capacity + gain_total_ciblé) >= total_required,
+                'impact': f"+{gain_total_cible} surveillances",
+                'feasible_after': (total_capacity + gain_total_cible) >= total_required,
                 'priority': 2
             })
     
-    # 7. Analyser les vœux
+    # 9. Analyser les vœux
     voeux_df = pd.read_sql_query("""
         SELECT COUNT(*) as nb_voeux
         FROM voeu
@@ -267,11 +312,11 @@ def diagnose_infeasibility(session_id, conn):
                 'severity': 'MEDIUM'
             })
     
-    # 8. Trier les raisons par sévérité
+    # 10. Trier les raisons par sévérité
     severity_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3}
     diagnostic['reasons'].sort(key=lambda x: severity_order.get(x['severity'], 999))
     
-    # 9. Trier les suggestions par priorité
+    # 11. Trier les suggestions par priorité
     diagnostic['suggestions'].sort(key=lambda x: x['priority'])
     
     return diagnostic
@@ -299,7 +344,8 @@ def format_diagnostic_message(diagnostic):
     message += f"   • Capacité disponible    : {diagnostic['total_capacity']}\n"
     message += f"   • DÉFICIT                : {diagnostic['deficit']} surveillances\n"
     message += f"   • Nombre d'enseignants   : {diagnostic['nb_enseignants']}\n"
-    message += f"   • Nombre de créneaux     : {diagnostic['nb_creneaux']}\n\n"
+    message += f"   • Nombre de créneaux     : {diagnostic['nb_creneaux']}\n"
+    message += f"   • Quota moyen nécessaire : {diagnostic.get('quota_moyen_necessaire', 0):.2f}\n\n"
     
     # Raisons principales
     if diagnostic['reasons']:
@@ -313,6 +359,12 @@ def format_diagnostic_message(diagnostic):
             }
             emoji = severity_emoji.get(reason['severity'], '⚪')
             message += f"   {i}. {emoji} {reason['message']}\n"
+            
+            # Détails supplémentaires pour l'équité
+            if reason['type'] == 'EQUITE_IMPOSSIBLE' and 'details' in reason:
+                for detail in reason['details'][:3]:  # Top 3
+                    message += f"      → {detail['message']}\n"
+        
         message += "\n"
     
     # Analyse par grade (top 5 déficits)
@@ -327,10 +379,18 @@ def format_diagnostic_message(diagnostic):
             message += f"Déficit: {grade_info['deficit']:5.1f}\n"
         message += "\n"
     
+    # Analyse d'équité
+    if 'equite_analysis' in diagnostic and diagnostic['equite_analysis']:
+        message += "⚖️ PROBLÈMES D'ÉQUITÉ ABSOLUE\n"
+        for eq_issue in diagnostic['equite_analysis'][:5]:  # Top 5
+            message += f"   • Grade {eq_issue['grade']} : {eq_issue['surveillances_attendues']:.1f} surveillances "
+            message += f"pour {eq_issue['nb_enseignants']} enseignants (indivisible)\n"
+        message += "\n"
+    
     # Suggestions
     if diagnostic['suggestions']:
         message += "💡 SOLUTIONS RECOMMANDÉES\n"
-        for i, suggestion in enumerate(diagnostic['suggestions'][:3], 1):  # Top 3
+        for i, suggestion in enumerate(diagnostic['suggestions'][:4], 1):  # Top 4
             feasible_icon = "✅" if suggestion.get('feasible_after', False) else "⚠️"
             message += f"\n   {i}. {feasible_icon} {suggestion['description']}\n"
             message += f"      Impact : {suggestion['impact']}\n"

@@ -127,11 +127,15 @@ def load_data_from_db(session_id):
     """Charger toutes les données depuis la base de données"""
     print("\n" + "="*60)
     print("CHARGEMENT DES DONNÉES DEPUIS SQLite")
+    print(f"SESSION ID : {session_id}")
     print("="*60)
+    
+    import time
+    start_time = time.time()
     
     conn = get_db_connection()
     
-    # 1. Charger les enseignants
+    # 1. Charger les enseignants (tous, pas filtré par session)
     print("\n📊 Chargement des enseignants...")
     enseignants_df = pd.read_sql_query("""
         SELECT 
@@ -195,7 +199,7 @@ def load_data_from_db(session_id):
     """, conn, params=(session_id,))
     print(f"✓ {len(voeux_df)} vœux chargés")
     
-    # 6. Charger les paramètres de grades
+    # 6. Charger les paramètres de grades (tous, pas filtré par session)
     print("\n⚙️ Chargement des paramètres de grades...")
     parametres_df = pd.read_sql_query("""
         SELECT 
@@ -232,7 +236,9 @@ def load_data_from_db(session_id):
     
     conn.close()
     
-    print("\n✓ Toutes les données chargées depuis SQLite")
+    elapsed = time.time() - start_time
+    print(f"\n✓ Toutes les données chargées depuis SQLite en {elapsed:.2f}s")
+    print(f"✓ Données de la session {session_id} uniquement")
     
     return enseignants_df, planning_df, salles_df, voeux_df, parametres_df, mapping_df, salle_par_creneau_df, adjusted_quotas
 
@@ -319,8 +325,14 @@ def build_creneau_responsables_mapping(creneaux):
     return creneau_responsables
 
 
-def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df):
-    """Construire les créneaux avec calcul correct du nombre de surveillants"""
+def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df, nb_reserves_dynamique=None):
+    """
+    Construire les créneaux avec calcul correct du nombre de surveillants
+    
+    Args:
+        nb_reserves_dynamique: Nombre de réserves par créneau (dynamique). 
+                               Si None, calcul automatique basé sur le nombre de salles
+    """
     print("\n=== ÉTAPE 1 : Construction des créneaux ===")
     
     salles_df['h_debut_parsed'] = salles_df['heure_debut'].apply(parse_time)
@@ -343,8 +355,14 @@ def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_d
         key = (date, h_debut)
         nb_salles = nb_salles_map.get(key, len(group))
         
-        # FORMULE : 2 surveillants par salle + 4 réserves par créneau
-        nb_reserves = 4
+        # CALCUL DYNAMIQUE DES RÉSERVES
+        if nb_reserves_dynamique is None:
+            # Calcul automatique : min(nb_salles, 4) pour éviter trop de réserves
+            nb_reserves = min(nb_salles, 4)
+        else:
+            nb_reserves = nb_reserves_dynamique
+        
+        # FORMULE : 2 surveillants par salle + nb_reserves réserves par créneau
         nb_surveillants = (nb_salles * 2) + nb_reserves
         
         # Associer chaque salle à son responsable
@@ -369,6 +387,7 @@ def build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_d
         }
     
     print(f"✓ {len(creneaux)} créneaux identifiés")
+    print(f"✓ Réserves par créneau : {'dynamique' if nb_reserves_dynamique is None else nb_reserves_dynamique}")
     print(f"✓ Total surveillants requis : {sum(c['nb_surveillants'] for c in creneaux.values())}")
     
     return creneaux
@@ -546,6 +565,95 @@ def get_seance_number(seance):
     return None
 
 
+def enforce_absolute_equity_by_grade(affectations, teachers):
+    """
+    Post-traitement pour garantir l'équité ABSOLUE par grade
+    
+    Si un grade a des écarts (ex: 3 enseignants avec 8 surveillances, 6 avec 9),
+    tous sont ajustés à la valeur maximale (9 dans cet exemple).
+    
+    Les enseignants en dessous du maximum sont marqués pour réaffectation.
+    
+    Returns:
+        affectations_ajustees: Liste des affectations avec marquage
+        needs_reaffectation: Liste des (code_ens, nb_manquant) à réaffecter
+    """
+    print("\n" + "="*60)
+    print("POST-TRAITEMENT : ÉQUITÉ ABSOLUE PAR GRADE")
+    print("="*60)
+    
+    # Compter les affectations par enseignant
+    aff_counts = {}
+    for aff in affectations:
+        code = aff['code_smartex_ens']
+        if code not in aff_counts:
+            aff_counts[code] = 0
+        aff_counts[code] += 1
+    
+    # Grouper par grade
+    grade_stats = {}
+    for code, teacher in teachers.items():
+        if not teacher['participe']:
+            continue
+        
+        grade = teacher['grade']
+        if grade not in grade_stats:
+            grade_stats[grade] = {
+                'codes': [],
+                'counts': []
+            }
+        
+        count = aff_counts.get(code, 0)
+        grade_stats[grade]['codes'].append(code)
+        grade_stats[grade]['counts'].append(count)
+    
+    # Identifier les ajustements nécessaires
+    needs_reaffectation = []
+    
+    print("\n📊 Analyse par grade :")
+    print("-" * 70)
+    
+    for grade in sorted(grade_stats.keys()):
+        stats = grade_stats[grade]
+        counts = stats['counts']
+        codes = stats['codes']
+        
+        if not counts:
+            continue
+        
+        min_count = min(counts)
+        max_count = max(counts)
+        avg_count = sum(counts) / len(counts)
+        diff = max_count - min_count
+        
+        print(f"{grade:5s} : {min_count:2d}-{max_count:2d} (moy: {avg_count:4.1f}) | ", end="")
+        
+        if diff == 0:
+            print("✓ ÉQUITÉ PARFAITE")
+        else:
+            print(f"⚠️  ÉCART DÉTECTÉ = {diff}")
+            
+            # Identifier les enseignants en dessous du maximum
+            for code, count in zip(codes, counts):
+                if count < max_count:
+                    nb_manquant = max_count - count
+                    needs_reaffectation.append((code, nb_manquant))
+                    teacher = teachers[code]
+                    print(f"      → {teacher['nom']} {teacher['prenom']}: "
+                          f"{count} → {max_count} (+{nb_manquant})")
+    
+    print("-" * 70)
+    
+    if needs_reaffectation:
+        print(f"\n⚠️  {len(needs_reaffectation)} enseignants nécessitent une réaffectation")
+        print("💡 SOLUTION : Augmenter les quotas maximum ou ajouter des créneaux")
+        print("             pour permettre ces affectations supplémentaires")
+    else:
+        print("\n✅ ÉQUITÉ ABSOLUE GARANTIE pour tous les grades")
+    
+    return affectations, needs_reaffectation
+
+
 def optimize_surveillance_scheduling(
     enseignants_df,
     planning_df,
@@ -554,31 +662,62 @@ def optimize_surveillance_scheduling(
     parametres_df,
     mapping_df,
     salle_par_creneau_df,
-    adjusted_quotas
+    adjusted_quotas,
+    nb_reserves_dynamique=None
 ):
     """
-    Optimisation principale avec contraintes corrigées
+    Optimisation principale avec hiérarchie de contraintes
     
-    NOUVEAUTÉ : Prise en compte des quotas ajustés pour équité inter-sessions
+    CONTRAINTES HARD (Obligatoires) :
+    - H1 : Couverture complète des créneaux
+    - H2C : Responsable ne surveille pas sa propre salle
+    - H3A : Respect des quotas maximum (ajustés)
+    - H4 : ÉQUITÉ ABSOLUE PAR GRADE (différence = 0) - CONTRAINTE HARD STRICTE
+    
+    CONTRAINTES SOFT (Par ordre de priorité décroissante) :
+    - S1 : Respect des vœux (poids 100)
+    - S2 : Minimisation écarts quotas (poids 10)
+    - S3 : Priorité quotas ajustés (poids 8)
+    - S4 : Dispersion dans la journée (poids 5)
+    - S5 : Présence responsables (poids 1)
+    
+    Args:
+        nb_reserves_dynamique: Nombre de réserves par créneau (None = automatique)
     """
+    import time
+    opt_start_time = time.time()
+    
     print("\n" + "="*60)
     print("DÉMARRAGE DE L'OPTIMISATION OR-TOOLS CP-SAT")
-    print("AVEC QUOTAS AJUSTÉS")
+    print("AVEC ÉQUITÉ ABSOLUE PAR GRADE EN CONTRAINTE HARD")
+    if nb_reserves_dynamique is not None:
+        print(f"RÉSERVES DYNAMIQUES : {nb_reserves_dynamique} par créneau")
+    else:
+        print("RÉSERVES DYNAMIQUES : Calcul automatique")
     print("="*60)
     
     salle_responsable = build_salle_responsable_mapping(planning_df)
-    creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df)
+    creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df, nb_reserves_dynamique)
     creneaux = map_creneaux_to_jours_seances(creneaux, mapping_df)
     creneau_responsables = build_creneau_responsables_mapping(creneaux)
     teachers = build_teachers_dict(enseignants_df, parametres_df, adjusted_quotas)
     voeux_set = build_voeux_set(voeux_df)
+    
+    prep_time = time.time() - opt_start_time
+    print(f"\n⏱️  Temps de préparation : {prep_time:.2f}s")
     
     print("\n=== ÉTAPE 5 : Création du modèle CP-SAT ===")
     
     teacher_codes = [c for c, t in teachers.items() if t['participe']]
     creneau_ids = [cid for cid, c in creneaux.items() if c['jour'] is not None]
     
-    # Grouper par grade
+    print(f"\n📊 Taille du problème :")
+    print(f"   - Enseignants participants : {len(teacher_codes)}")
+    print(f"   - Créneaux à couvrir       : {len(creneau_ids)}")
+    print(f"   - Variables max possibles  : {len(teacher_codes) * len(creneau_ids):,}")
+    print(f"   - Vœux de non-surveillance : {len(voeux_set)}")
+    
+    # Grouper par grade pour contrainte d'équité (H4)
     teachers_by_grade = {}
     for tcode in teacher_codes:
         grade = teachers[tcode]['grade']
@@ -586,13 +725,12 @@ def optimize_surveillance_scheduling(
             teachers_by_grade[grade] = []
         teachers_by_grade[grade].append(tcode)
     
-    # NOUVEAUTÉ : Trier les enseignants par priorité ajustée (quota ajusté croissant)
-    # Ceux avec quota ajusté faible = haute priorité = doivent surveiller moins
+    # Trier par priorité ajustée
     teachers_by_priority = sorted(
         teacher_codes,
         key=lambda t: (
-            teachers[t]['priorite_ajustee'],  # Priorité principale (basée sur quota ajusté)
-            teachers[t]['priorite_grade']     # Priorité secondaire (grade)
+            teachers[t]['priorite_ajustee'],
+            teachers[t]['priorite_grade']
         )
     )
     
@@ -605,23 +743,25 @@ def optimize_surveillance_scheduling(
     
     model = cp_model.CpModel()
     
-    print("\nCréation des variables...")
+    # =========================================================================
+    # CRÉATION DES VARIABLES DE DÉCISION
+    # =========================================================================
+    print("\n=== Création des variables de décision ===")
+    print("Variables créées : x[(enseignant, créneau)] = 0 ou 1")
+    print("Exclusions appliquées :")
+    print("  - H2C : Responsable ne peut pas surveiller sa propre salle")
+    print("  - Les vœux NE sont PAS exclus (gérés en SOFT)")
+    
     x = {}
     
     nb_vars = 0
-    nb_exclusions_voeux = 0
     nb_exclusions_responsable = 0
     
     for tcode in teacher_codes:
         for cid in creneau_ids:
             cre = creneaux[cid]
             
-            # CONTRAINTE H2B : Exclusion par vœux
-            if (tcode, cre['jour'], cre['seance']) in voeux_set:
-                nb_exclusions_voeux += 1
-                continue
-            
-            # CONTRAINTE H2C CORRIGÉE : L'enseignant ne peut surveiller que les salles
+            # CONTRAINTE H2C : L'enseignant ne peut surveiller que les salles
             # dont il n'est PAS responsable dans ce créneau
             salles_disponibles = []
             
@@ -640,117 +780,206 @@ def optimize_surveillance_scheduling(
             x[(tcode, cid)] = model.NewBoolVar(f"x_{tcode}_{cid}")
             nb_vars += 1
     
-    print(f"✓ {nb_vars:,} variables créées")
-    print(f"✓ {nb_exclusions_voeux:,} exclusions (vœux - H2B)")
+    print(f"\n✓ {nb_vars:,} variables créées")
     print(f"✓ {nb_exclusions_responsable:,} exclusions (responsable - H2C)")
+    print(f"⚠️  Vœux gérés en SOFT (aucune exclusion)")
     
+    # =========================================================================
+    # CONTRAINTES HARD (OBLIGATOIRES)
+    # =========================================================================
     print("\n" + "="*60)
-    print("AJOUT DES CONTRAINTES (PAR ORDRE DE PRIORITÉ)")
+    print("AJOUT DES CONTRAINTES HARD (OBLIGATOIRES)")
     print("="*60)
     
-    # =========================================================================
+    # -------------------------------------------------------------------------
     # CONTRAINTE HARD H1 : COUVERTURE COMPLÈTE DES CRÉNEAUX
-    # =========================================================================
+    # -------------------------------------------------------------------------
+    # Chaque créneau doit avoir EXACTEMENT le nombre requis de surveillants
+    # (2 titulaires par salle + 4 réserves par créneau)
     print("\n[HARD H1] Couverture complète des créneaux")
+    print("Description : Chaque créneau reçoit exactement le nombre requis de surveillants")
+    
     for cid in creneau_ids:
         vars_creneau = [x[(t, cid)] for t in teacher_codes if (t, cid) in x]
         required = creneaux[cid]['nb_surveillants']
         model.Add(sum(vars_creneau) == required)
+    
     print(f"✓ H1 : {len(creneau_ids)} créneaux couverts exactement")
     
-    # =========================================================================
+    # -------------------------------------------------------------------------
     # CONTRAINTE HARD H3A : RESPECT DES QUOTAS MAXIMUM (AJUSTÉS)
-    # =========================================================================
+    # -------------------------------------------------------------------------
+    # Aucun enseignant ne peut dépasser son quota maximum
+    # Les quotas sont ajustés selon l'historique de la session précédente
     print("\n[HARD H3A] Respect des quotas maximum (avec quotas ajustés)")
+    print("Description : Aucun enseignant ne dépasse son quota maximum")
+    print("              Les quotas tiennent compte de l'historique précédent")
+    
     for tcode in teacher_codes:
         vars_teacher = [x[(tcode, cid)] for cid in creneau_ids if (tcode, cid) in x]
-        quota = teachers[tcode]['quota']  # Quota ajusté si disponible
+        quota = teachers[tcode]['quota']
         
         if vars_teacher:
             model.Add(sum(vars_teacher) <= quota)
     
     print(f"✓ H3A : {len(teacher_codes)} enseignants limités à leur quota (ajusté)")
-    # =========================================================================
-    # CONTRAINTE HARD H2A : ÉQUITÉ STRICTE PAR GRADE
-    # =========================================================================
-    print("\n[HARD H2A] Équité stricte entre enseignants du même grade")
     
-    nb_contraintes_equite = 0
+    # -------------------------------------------------------------------------
+    # CONTRAINTE HARD H4 : ÉQUITÉ ABSOLUE PAR GRADE
+    # -------------------------------------------------------------------------
+    # Tous les enseignants d'un même grade doivent avoir EXACTEMENT le même
+    # nombre de surveillances (différence = 0)
+    # CONTRAINTE ÉLIMINATOIRE : Si non satisfaite, le problème est INFAISABLE
+    print("\n[HARD H4] Équité ABSOLUE par grade (différence = 0)")
+    print("Description : Tous les enseignants d'un même grade ont EXACTEMENT")
+    print("              le même nombre de surveillances")
+    print("Type        : CONTRAINTE ÉLIMINATOIRE (HARD)")
+    print("Comportement: Si impossible à satisfaire, le problème sera INFAISABLE")
+    
+    nb_equite_constraints = 0
+    
     for grade, tcodes_grade in teachers_by_grade.items():
         if len(tcodes_grade) <= 1:
+            print(f"   Grade {grade}: 1 seul enseignant, pas de contrainte d'équité")
             continue
         
-        for i in range(len(tcodes_grade)):
-            for j in range(i + 1, len(tcodes_grade)):
-                t1 = tcodes_grade[i]
-                t2 = tcodes_grade[j]
-                
-                vars_t1 = [x[(t1, cid)] for cid in creneau_ids if (t1, cid) in x]
-                vars_t2 = [x[(t2, cid)] for cid in creneau_ids if (t2, cid) in x]
-                
-                if vars_t1 and vars_t2:
-                    nb_t1 = model.NewIntVar(0, len(creneau_ids), f"nb_{t1}")
-                    nb_t2 = model.NewIntVar(0, len(creneau_ids), f"nb_{t2}")
-                    
-                    model.Add(nb_t1 == sum(vars_t1))
-                    model.Add(nb_t2 == sum(vars_t2))
-                    
-                    model.Add(nb_t1 - nb_t2 <= 1)
-                    model.Add(nb_t2 - nb_t1 <= 1)
-                    nb_contraintes_equite += 2
+        print(f"   Grade {grade}: {len(tcodes_grade)} enseignants - équité stricte imposée")
+        
+        # Créer des variables pour le nombre d'affectations de chaque enseignant
+        nb_vars_per_teacher = {}
+        for tcode in tcodes_grade:
+            vars_teacher = [x[(tcode, cid)] for cid in creneau_ids if (tcode, cid) in x]
+            
+            if vars_teacher:
+                nb_var = model.NewIntVar(0, len(creneau_ids), f"nb_aff_{tcode}")
+                model.Add(nb_var == sum(vars_teacher))
+                nb_vars_per_teacher[tcode] = nb_var
+        
+        # Imposer que tous les enseignants du même grade aient le même nombre
+        # d'affectations (égalité stricte)
+        if len(nb_vars_per_teacher) > 1:
+            first_teacher = list(nb_vars_per_teacher.keys())[0]
+            first_nb = nb_vars_per_teacher[first_teacher]
+            
+            for tcode in list(nb_vars_per_teacher.keys())[1:]:
+                # Contrainte HARD : nb_affectations(enseignant_i) == nb_affectations(enseignant_1)
+                model.Add(nb_vars_per_teacher[tcode] == first_nb)
+                nb_equite_constraints += 1
     
-    print(f"✓ H2A : {nb_contraintes_equite} contraintes d'équité ajoutées")
+    print(f"✓ H4 : {nb_equite_constraints} contraintes d'égalité stricte par grade (HARD)")
+    print(f"       Si non satisfaisables, le solver retournera INFAISABLE")
     
     # =========================================================================
-    # CONTRAINTE SOFT S1 : DISPERSION DANS LA MÊME JOURNÉE
+    # CONTRAINTES SOFT (OPTIMISATION PAR ORDRE DE PRIORITÉ)
     # =========================================================================
-    print("\n[SOFT S1] Dispersion des surveillances dans la même journée")
+    print("\n" + "="*60)
+    print("AJOUT DES CONTRAINTES SOFT (OPTIMISATION)")
+    print("="*60)
     
-    dispersion_penalties = []
+    # -------------------------------------------------------------------------
+    # CONTRAINTE SOFT S1 : RESPECT DES VŒUX
+    # -------------------------------------------------------------------------
+    # Les vœux de non-surveillance sont respectés autant que possible
+    # Poids 100 = PRIORITÉ HAUTE
+    print("\n[SOFT S1] Respect des vœux (priorité haute, poids 100)")
+    print("Description : Les vœux de non-surveillance sont respectés autant que possible")
+    print("Priorité    : HAUTE (poids 100)")
+    print("Comportement: Si nécessaire pour l'équité, un vœu peut être non respecté")
+    
+    voeux_penalties = []
     
     for tcode in teacher_codes:
-        creneaux_by_jour = {}
         for cid in creneau_ids:
-            if (tcode, cid) in x:
-                jour = creneaux[cid]['jour']
-                if jour not in creneaux_by_jour:
-                    creneaux_by_jour[jour] = []
-                creneaux_by_jour[jour].append(cid)
-        
-        for jour, cids_jour in creneaux_by_jour.items():
-            if len(cids_jour) <= 1:
+            if (tcode, cid) not in x:
                 continue
             
-            seances_info = []
-            for cid in cids_jour:
-                seance_num = get_seance_number(creneaux[cid]['seance'])
-                if seance_num is not None:
-                    seances_info.append((cid, seance_num))
+            cre = creneaux[cid]
             
-            for i in range(len(seances_info)):
-                for j in range(i + 1, len(seances_info)):
-                    cid1, s1 = seances_info[i]
-                    cid2, s2 = seances_info[j]
-                    
-                    gap = abs(s2 - s1)
-                    if gap > 1:
-                        both_assigned = model.NewBoolVar(f"both_{tcode}_{cid1}_{cid2}")
-                        model.Add(both_assigned == 1).OnlyEnforceIf([x[(tcode, cid1)], x[(tcode, cid2)]])
-                        model.Add(both_assigned == 0).OnlyEnforceIf([x[(tcode, cid1)].Not()])
-                        model.Add(both_assigned == 0).OnlyEnforceIf([x[(tcode, cid2)].Not()])
-                        
-                        penalty = model.NewIntVar(0, gap * 10, f"penalty_{tcode}_{cid1}_{cid2}")
-                        model.Add(penalty == gap * 10).OnlyEnforceIf(both_assigned)
-                        model.Add(penalty == 0).OnlyEnforceIf(both_assigned.Not())
-                        
-                        dispersion_penalties.append(penalty)
+            # Si l'enseignant a un vœu de non-surveillance pour ce créneau
+            if (tcode, cre['jour'], cre['seance']) in voeux_set:
+                # Créer une pénalité si l'enseignant est affecté malgré son vœu
+                voeu_penalty = model.NewIntVar(0, 100, f"voeu_penalty_{tcode}_{cid}")
+                
+                # Pénalité de 100 si affecté malgré le vœu
+                model.Add(voeu_penalty == 100).OnlyEnforceIf(x[(tcode, cid)])
+                model.Add(voeu_penalty == 0).OnlyEnforceIf(x[(tcode, cid)].Not())
+                
+                voeux_penalties.append(voeu_penalty)
     
-    print(f"✓ S1 : {len(dispersion_penalties)} pénalités de dispersion")
+    print(f"✓ S1 : {len(voeux_penalties)} pénalités de non-respect des vœux")
     
-    # =========================================================================
-    # CONTRAINTE SOFT S2 : PRÉFÉRENCE POUR RESPONSABLES DISPONIBLES
-    # =========================================================================
-    print("\n[SOFT S2] Préférence pour présence responsables (contrainte souple)")
+    # -------------------------------------------------------------------------
+    # CONTRAINTE SOFT S2 : CONCENTRATION SUR LE MINIMUM DE JOURS
+    # -------------------------------------------------------------------------
+    # Privilégier la concentration des surveillances sur le minimum de jours possible
+    # au lieu de les disperser sur plusieurs jours
+    # Poids 50 = PRIORITÉ TRÈS HAUTE (plus important que l'espacement dans une journée)
+    print("\n[SOFT S2] Concentration sur le minimum de jours (poids 50)")
+    print("Description : Concentre les surveillances sur le minimum de jours possible")
+    print("Priorité    : TRÈS HAUTE (poids 50)")
+    print("Exemple     : Préfère 4 séances sur 1 jour plutôt que 2+1+1 sur 3 jours")
+    
+    concentration_penalties = []
+    
+    # Identifier tous les jours uniques
+    all_jours = set()
+    for cid in creneau_ids:
+        jour = creneaux[cid]['jour']
+        if jour is not None:
+            all_jours.add(jour)
+    
+    for tcode in teacher_codes:
+        # Créer des variables booléennes pour chaque jour
+        # jour_used[j] = 1 si l'enseignant a au moins une surveillance le jour j
+        jour_used = {}
+        
+        for jour in all_jours:
+            jour_var = model.NewBoolVar(f"jour_used_{tcode}_{jour}")
+            jour_used[jour] = jour_var
+            
+            # Récupérer tous les créneaux de ce jour pour cet enseignant
+            creneaux_jour = [cid for cid in creneau_ids 
+                            if (tcode, cid) in x and creneaux[cid]['jour'] == jour]
+            
+            if creneaux_jour:
+                # Si au moins un créneau est affecté ce jour, jour_used = 1
+                # Sinon jour_used = 0
+                vars_jour = [x[(tcode, cid)] for cid in creneaux_jour]
+                
+                # jour_used = 1 si au moins une surveillance ce jour
+                # On utilise une contrainte : jour_used >= x[i] pour tout i du jour
+                for var in vars_jour:
+                    model.Add(jour_var >= var)
+                
+                # jour_used <= somme des x[i] (si aucun x[i], alors jour_used = 0)
+                model.Add(jour_var <= sum(vars_jour))
+        
+        # Créer une pénalité basée sur le nombre total de jours utilisés
+        # Plus on utilise de jours, plus la pénalité est élevée
+        if jour_used:
+            nb_jours_utilises = model.NewIntVar(0, len(all_jours), 
+                                                f"nb_jours_{tcode}")
+            model.Add(nb_jours_utilises == sum(jour_used.values()))
+            
+            # Pénalité proportionnelle au nombre de jours
+            # Chaque jour supplémentaire coûte 100 points
+            penalty = model.NewIntVar(0, len(all_jours) * 100, 
+                                     f"concentration_penalty_{tcode}")
+            model.Add(penalty == nb_jours_utilises * 100)
+            
+            concentration_penalties.append(penalty)
+    
+    print(f"✓ S2 : {len(concentration_penalties)} pénalités de concentration par enseignant")
+    
+    # -------------------------------------------------------------------------
+    # CONTRAINTE SOFT S3 : PRÉFÉRENCE POUR RESPONSABLES DISPONIBLES
+    # -------------------------------------------------------------------------
+    # Préférence (légère) pour que les responsables soient présents dans leurs salles
+    # Poids 1 = PRIORITÉ FAIBLE
+    print("\n[SOFT S3] Préférence pour présence responsables (poids 1)")
+    print("Description : Préférence légère pour que les responsables soient présents")
+    print("Priorité    : FAIBLE (poids 1)")
+    print("Comportement: Contrainte souple, facilement sacrifiée pour autres objectifs")
     
     presence_penalties = []
     
@@ -767,12 +996,18 @@ def optimize_surveillance_scheduling(
                 
                 presence_penalties.append(absence_penalty)
     
-    print(f"✓ S2 : {len(presence_penalties)} pénalités de présence responsable (souple)")
+    print(f"✓ S3 : {len(presence_penalties)} pénalités de présence responsable (souple)")
     
-    # =========================================================================
-    # NOUVEAUTÉ : CONTRAINTE SOFT S3 : PRIORITÉ AUX QUOTAS AJUSTÉS FAIBLES
-    # =========================================================================
-    print("\n[SOFT S3] Priorité pour enseignants avec quotas ajustés faibles")
+    # -------------------------------------------------------------------------
+    # CONTRAINTE SOFT S4 : PRIORITÉ AUX QUOTAS AJUSTÉS FAIBLES
+    # -------------------------------------------------------------------------
+    # Les enseignants avec quotas ajustés faibles (qui ont moins surveillé avant)
+    # sont priorisés pour surveiller moins
+    # Poids 8 = PRIORITÉ MOYENNE-FAIBLE
+    print("\n[SOFT S4] Priorité pour enseignants avec quotas ajustés faibles (poids 8)")
+    print("Description : Les enseignants qui ont moins surveillé auparavant")
+    print("              sont priorisés pour surveiller moins cette fois")
+    print("Priorité    : MOYENNE-FAIBLE (poids 8)")
     
     priority_penalties = []
     
@@ -786,13 +1021,8 @@ def optimize_surveillance_scheduling(
             nb_aff = model.NewIntVar(0, len(creneau_ids), f"nb_aff_prio_{tcode}")
             model.Add(nb_aff == sum(vars_teacher))
             
-            # Plus le quota ajusté est faible, plus on veut que l'enseignant surveille MOINS
-            # On pénalise proportionnellement au quota ajusté
             quota_ajuste = teachers[tcode]['quota']
-            
-            # Coefficient de pénalité : inversement proportionnel au quota ajusté
-            # quota_ajuste faible = coefficient élevé = on veut minimiser ses affectations
-            penalty_coef = max(1, 20 - quota_ajuste)  # Entre 1 et 20
+            penalty_coef = max(1, 20 - quota_ajuste)
             
             penalty = model.NewIntVar(0, len(creneau_ids) * penalty_coef, 
                                      f"prio_penalty_{tcode}")
@@ -800,16 +1030,34 @@ def optimize_surveillance_scheduling(
             
             priority_penalties.append(penalty)
     
-    print(f"✓ S3 : {len(priority_penalties)} pénalités de priorité basées sur quotas ajustés")
+    print(f"✓ S4 : {len(priority_penalties)} pénalités de priorité basées sur quotas ajustés")
     
     # =========================================================================
-    # OBJECTIF : Minimiser les écarts + pénalités
+    # DÉFINITION DE LA FONCTION OBJECTIF
     # =========================================================================
-    print("\n=== DÉFINITION DE L'OBJECTIF ===")
+    print("\n" + "="*60)
+    print("DÉFINITION DE LA FONCTION OBJECTIF")
+    print("="*60)
+    print("\nHiérarchie des poids (du plus important au moins important) :")
+    print("  1. Respect vœux              : poids 100")
+    print("  2. Concentration jours       : poids 50")
+    print("  3. Écarts aux quotas         : poids 10")
+    print("  4. Priorités quotas ajustés  : poids 8")
+    print("  5. Présence responsables     : poids 1")
+    print("\nNOTE: L'équité absolue par grade est maintenant une contrainte HARD")
+    print("      Elle sera satisfaite ou le problème sera INFAISABLE")
     
     objective_terms = []
     
-    # 1. Écarts individuels par rapport aux quotas (ajustés)
+    # 1. PRIORITÉ TRÈS HAUTE : Pénalités de non-respect des vœux (poids 100)
+    for penalty in voeux_penalties:
+        objective_terms.append(penalty * 100)
+    
+    # 2. PRIORITÉ HAUTE : Concentration sur minimum de jours (poids 50)
+    for penalty in concentration_penalties:
+        objective_terms.append(penalty * 50)
+    
+    # 3. Écarts individuels par rapport aux quotas (poids 10)
     for tcode in teacher_codes:
         vars_teacher = [x[(tcode, cid)] for cid in creneau_ids if (tcode, cid) in x]
         
@@ -824,30 +1072,29 @@ def optimize_surveillance_scheduling(
             abs_delta = model.NewIntVar(0, len(creneau_ids), f"abs_{tcode}")
             model.AddAbsEquality(abs_delta, delta)
             
-            objective_terms.append(abs_delta * 7)  # Poids modifié
+            objective_terms.append(abs_delta * 10)
     
-    # 2. Pénalités de dispersion
-    for penalty in dispersion_penalties:
-        objective_terms.append(penalty * 5)  # Poids augmenté
-    
-    # 3. Pénalités de présence responsable (souple)
-    for penalty in presence_penalties:
-        objective_terms.append(penalty * 1)  # Poids diminué
-    
-    # 4. NOUVEAUTÉ : Pénalités de priorité basées sur quotas ajustés
+    # 3. Pénalités de priorité basées sur quotas ajustés (poids 8)
     for penalty in priority_penalties:
-        objective_terms.append(penalty * 10)  # Poids modifié
+        objective_terms.append(penalty * 8)
+    
+    # 4. Pénalités de présence responsable (poids 1)
+    for penalty in presence_penalties:
+        objective_terms.append(penalty * 1)
     
     model.Minimize(sum(objective_terms))
     
-    print(f"✓ Objectif : minimiser {len(objective_terms)} termes")
-    print(f"   - Écarts quotas : {len(teacher_codes)}")
-    print(f"   - Dispersion : {len(dispersion_penalties)}")
-    print(f"   - Présence responsables : {len(presence_penalties)}")
-    print(f"   - Priorités ajustées : {len(priority_penalties)}")
+    model_creation_time = time.time() - opt_start_time - prep_time
+    print(f"\n⏱️  Temps de création du modèle : {model_creation_time:.2f}s")
+    print(f"\n✓ Fonction objectif définie avec {len(objective_terms)} termes :")
+    print(f"   - Respect vœux (poids 100)          : {len(voeux_penalties)} termes")
+    print(f"   - Concentration jours (poids 50)    : {len(concentration_penalties)} termes")
+    print(f"   - Écarts quotas (poids 10)          : {len(teacher_codes)} termes")
+    print(f"   - Priorités ajustées (poids 8)      : {len(priority_penalties)} termes")
+    print(f"   - Présence responsables (poids 1)   : {len(presence_penalties)} termes")
     
     # =========================================================================
-    # RÉSOLUTION
+    # RÉSOLUTION DU PROBLÈME
     # =========================================================================
     print("\n" + "="*60)
     print("RÉSOLUTION DU PROBLÈME")
@@ -858,15 +1105,34 @@ def optimize_surveillance_scheduling(
     solver.parameters.num_search_workers = 8
     solver.parameters.log_search_progress = True
     
+    # OPTIMISATIONS DE PERFORMANCE
+    # Stratégie de recherche optimisée pour problèmes d'affectation
+    solver.parameters.cp_model_presolve = True
+    solver.parameters.linearization_level = 2
+    solver.parameters.cp_model_probing_level = 2
+    
+    print("\nParamètres du solver :")
+    print(f"  - Temps maximum      : 180 secondes")
+    print(f"  - Nombre de workers  : 8")
+    print(f"  - Logs activés       : Oui")
+    print(f"  - Prétraitement      : Activé (probing level 2)")
+    print(f"  - Linéarisation      : Niveau 2")
+    
     status = solver.Solve(model)
     
+    solve_time_only = solver.WallTime()
+    total_time = time.time() - opt_start_time
+    
     print(f"\n✓ Statut : {solver.StatusName(status)}")
-    print(f"✓ Temps de résolution : {solver.WallTime():.2f}s")
+    print(f"✓ Temps de résolution pure : {solve_time_only:.2f}s")
+    print(f"✓ Temps total (préparation + modèle + résolution) : {total_time:.2f}s")
     
     affectations = []
     
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        print("\n=== EXTRACTION DE LA SOLUTION ===")
+        print("\n" + "="*60)
+        print("EXTRACTION DE LA SOLUTION")
+        print("="*60)
         
         for (tcode, cid), var in x.items():
             if solver.Value(var) == 1:
@@ -895,14 +1161,70 @@ def optimize_surveillance_scheduling(
         with_adjusted = sum(1 for a in affectations if a['quota_ajuste'])
         print(f"✓ {with_adjusted} affectations avec quotas ajustés")
         
+        # Vérification de l'équité par grade (doit être PARFAITE maintenant)
+        print("\n📊 Vérification de l'équité par grade (CONTRAINTE HARD) :")
+        print("-" * 60)
+        aff_by_grade = {}
+        for aff in affectations:
+            grade = aff['grade_code_ens']
+            code = aff['code_smartex_ens']
+            if grade not in aff_by_grade:
+                aff_by_grade[grade] = {}
+            if code not in aff_by_grade[grade]:
+                aff_by_grade[grade][code] = 0
+            aff_by_grade[grade][code] += 1
+        
+        for grade in sorted(aff_by_grade.keys()):
+            counts = list(aff_by_grade[grade].values())
+            min_c = min(counts)
+            max_c = max(counts)
+            avg_c = sum(counts) / len(counts)
+            diff = max_c - min_c
+            
+            # Maintenant l'équité doit TOUJOURS être parfaite (contrainte HARD)
+            status_eq = "✓ PARFAIT (HARD)" if diff == 0 else f"❌ ERREUR: ÉCART={diff}"
+            print(f"{grade:5s} : {min_c:2d}-{max_c:2d} (moy: {avg_c:4.1f}) | {status_eq}")
+        
+        print("-" * 60)
+        
         affectations = assign_rooms_equitable(affectations, creneaux, planning_df)
         
+        # POST-TRAITEMENT : Garantir l'équité absolue par grade
+        affectations, needs_reaffectation = enforce_absolute_equity_by_grade(affectations, teachers)
+        
+        if needs_reaffectation:
+            print("\n" + "="*60)
+            print("⚠️  ATTENTION : ÉQUITÉ ABSOLUE NON GARANTIE")
+            print("="*60)
+            print(f"\n{len(needs_reaffectation)} enseignants nécessitent des affectations supplémentaires")
+            print("\n💡 ACTIONS RECOMMANDÉES :")
+            print("   1. Augmenter les quotas maximum pour les grades concernés")
+            print("   2. Ajouter des créneaux de surveillance supplémentaires")
+            print("   3. Réexécuter l'optimisation avec des paramètres ajustés")
+            print("\n📋 Détails des réaffectations nécessaires :")
+            for code, nb_manquant in needs_reaffectation:
+                t = teachers[code]
+                print(f"   - {t['nom']} {t['prenom']} ({t['grade']}): +{nb_manquant} surveillance(s)")
+        
     else:
-        print("\n❌ Aucune solution trouvée")
+        print("\n" + "="*60)
+        print("❌ AUCUNE SOLUTION TROUVÉE")
+        print("="*60)
         if status == cp_model.INFEASIBLE:
             print("Le problème est INFAISABLE")
+            print("\n⚠️  RAISONS POSSIBLES :")
+            print("  1. La contrainte d'ÉQUITÉ ABSOLUE par grade ne peut être satisfaite")
+            print("     avec les quotas et créneaux disponibles")
+            print("  2. Le nombre total de surveillants disponibles est insuffisant")
+            print("  3. Les quotas maximum par grade sont trop restrictifs")
+            print("\n💡 SUGGESTIONS :")
+            print("  - Vérifier que les quotas permettent une distribution équitable")
+            print("  - Augmenter les quotas si nécessaire")
+            print("  - Vérifier la disponibilité des enseignants par grade")
+            print("  - Si l'équité absolue est impossible, la remettre en SOFT")
         elif status == cp_model.MODEL_INVALID:
             print("Le modèle est INVALIDE")
+            print("Contacter l'administrateur du système")
     
     return {
         'status': 'ok' if status in (cp_model.OPTIMAL, cp_model.FEASIBLE) else 'infeasible',
@@ -911,10 +1233,25 @@ def optimize_surveillance_scheduling(
         'affectations': affectations
     }
 
-
+    
 def assign_rooms_equitable(affectations, creneaux, planning_df):
-    """Affectation ÉQUITABLE des surveillants aux salles"""
+    """
+    Affectation ÉQUITABLE des surveillants aux salles avec distribution optimale
+    
+    CONTRAINTE STRICTE : La différence entre le nombre de surveillants dans deux salles
+    du même créneau ne doit JAMAIS dépasser 1.
+    
+    Exemples valides :
+    - [3, 3, 3, 3] : différence max = 0 ✓
+    - [3, 3, 3, 2] : différence max = 1 ✓
+    - [3, 3, 2, 2] : différence max = 1 ✓
+    
+    Exemples INVALIDES :
+    - [4, 2, 2, 2] : différence max = 2 ✗
+    - [4, 3, 2, 2] : différence max = 2 ✗
+    """
     print("\n=== AFFECTATION ÉQUITABLE AUX SALLES ===")
+    print("CONTRAINTE : Différence max entre salles d'un même créneau ≤ 1")
     
     # Créer le mapping (date, heure, salle) -> responsable
     planning_df['h_debut_parsed'] = planning_df['h_debut'].apply(parse_time)
@@ -940,27 +1277,53 @@ def assign_rooms_equitable(affectations, creneaux, planning_df):
         cre_affs = aff_df[aff_df['creneau_id'] == cid].copy()
         salles_info = creneaux[cid]['salles_info']
         nb_salles = len(salles_info)
-        nb_reserves = creneaux[cid]['nb_reserves']
         
         total_surv = len(cre_affs)
         
-        # ALGORITHME DE DISTRIBUTION ÉQUITABLE
-        # Phase 1 : 2 TITULAIRES par salle
-        surv_per_salle = [2] * nb_salles
+        # ALGORITHME DE DISTRIBUTION ÉQUITABLE STRICTE
+        # Garantit que la différence entre min et max ne dépasse JAMAIS 1
         
-        # Phase 2 : Distribuer les 4 RÉSERVES (1 par salle maximum)
-        reserves_per_salle = [0] * nb_salles
-        for i in range(min(nb_reserves, nb_salles)):
-            reserves_per_salle[i] = 1
-            surv_per_salle[i] += 1
+        # Calculer la distribution de base (division équitable)
+        surv_base = total_surv // nb_salles  # Nombre de base par salle
+        surv_extra = total_surv % nb_salles   # Surveillants supplémentaires à distribuer
+        
+        # Créer le tableau de distribution
+        surv_per_salle = []
+        
+        # Les premières 'surv_extra' salles reçoivent (surv_base + 1) surveillants
+        # Les salles restantes reçoivent 'surv_base' surveillants
+        # Cela garantit automatiquement que max - min ≤ 1
+        for i in range(nb_salles):
+            if i < surv_extra:
+                surv_per_salle.append(surv_base + 1)
+            else:
+                surv_per_salle.append(surv_base)
+        
+        # Vérification de la contrainte (différence ≤ 1)
+        min_surv = min(surv_per_salle)
+        max_surv = max(surv_per_salle)
+        diff = max_surv - min_surv
+        
+        if diff > 1:
+            print(f"   ❌ ERREUR {cid}: différence {diff} > 1 détectée : {surv_per_salle}")
+            # Correction d'urgence si nécessaire
+            # Redistribuer pour garantir diff ≤ 1
+            total = sum(surv_per_salle)
+            base = total // nb_salles
+            extra = total % nb_salles
+            surv_per_salle = [base + 1 if i < extra else base for i in range(nb_salles)]
+            min_surv = min(surv_per_salle)
+            max_surv = max(surv_per_salle)
+            diff = max_surv - min_surv
+            print(f"   ✓ Correction appliquée : {surv_per_salle} (diff={diff})")
         
         # Affectation effective
         idx = 0
         for i, salle_info in enumerate(salles_info):
             salle = salle_info['salle']
+            nb_surv_salle = surv_per_salle[i]
             
-            # D'abord les 2 TITULAIRES
-            for j in range(2):
+            for j in range(nb_surv_salle):
                 if idx < len(cre_affs):
                     row = cre_affs.iloc[idx].to_dict()
                     row['cod_salle'] = salle
@@ -971,32 +1334,20 @@ def assign_rooms_equitable(affectations, creneaux, planning_df):
                     responsable_code = salle_responsable.get(key, None)
                     
                     row['responsable_salle'] = (row['code_smartex_ens'] == responsable_code)
-                    row['position'] = 'TITULAIRE'
-                    results.append(row)
-                    idx += 1
-            
-            # Ensuite la RÉSERVE si cette salle en reçoit une
-            if reserves_per_salle[i] > 0:
-                if idx < len(cre_affs):
-                    row = cre_affs.iloc[idx].to_dict()
-                    row['cod_salle'] = salle
                     
-                    date = row['date']
-                    h_debut = row['h_debut']
-                    key = (date, h_debut, salle)
-                    responsable_code = salle_responsable.get(key, None)
+                    # Déterminer si c'est un TITULAIRE ou une RÉSERVE
+                    # Les 2 premiers sont TITULAIRES, le reste RÉSERVE
+                    if j < 2:
+                        row['position'] = 'TITULAIRE'
+                    else:
+                        row['position'] = 'RESERVE'
                     
-                    row['responsable_salle'] = (row['code_smartex_ens'] == responsable_code)
-                    row['position'] = 'RESERVE'
                     results.append(row)
                     idx += 1
         
-        # Affichage
-        max_surv = max(surv_per_salle)
-        if max_surv > 3:
-            print(f"   ⚠️ {cid}: ERREUR - {max_surv} surveillants dans une salle")
-        else:
-            print(f"   ✓ {cid}: {surv_per_salle} surveillants par salle")
+        # Affichage de la distribution avec vérification
+        status = "✓" if diff <= 1 else "❌"
+        print(f"   {status} {cid}: {surv_per_salle} (min={min_surv}, max={max_surv}, diff={diff})")
     
     # Statistiques finales
     total_titulaires = sum(1 for r in results if r['position'] == 'TITULAIRE')
@@ -1004,6 +1355,7 @@ def assign_rooms_equitable(affectations, creneaux, planning_df):
     
     print(f"\n✓ {len(results)} affectations totales")
     print(f"✓ {total_titulaires} TITULAIRES + {total_reserves} RÉSERVES")
+    print(f"✓ Distribution équitable : différence max entre salles ≤ 1")
     
     return results
 
@@ -1128,6 +1480,27 @@ def main():
     
     session_id = int(input("\nEntrez l'ID de la session à optimiser: "))
     
+    # Demander le nombre de réserves (optionnel)
+    print("\n" + "="*60)
+    print("CONFIGURATION DES RÉSERVES")
+    print("="*60)
+    print("Nombre de réserves par créneau :")
+    print("  - Appuyez sur ENTRÉE pour calcul automatique (recommandé)")
+    print("  - Ou entrez un nombre (ex: 4)")
+    
+    nb_reserves_input = input("\nVotre choix : ").strip()
+    nb_reserves_dynamique = None
+    
+    if nb_reserves_input:
+        try:
+            nb_reserves_dynamique = int(nb_reserves_input)
+            print(f"✓ Nombre de réserves fixé à {nb_reserves_dynamique} par créneau")
+        except ValueError:
+            print("⚠️  Valeur invalide, utilisation du calcul automatique")
+            nb_reserves_dynamique = None
+    else:
+        print("✓ Calcul automatique activé")
+    
     try:
         print("\nChargement des données depuis SQLite...")
         (enseignants_df, planning_df, salles_df, voeux_df, parametres_df, 
@@ -1143,14 +1516,15 @@ def main():
     result = optimize_surveillance_scheduling(
         enseignants_df, planning_df, salles_df, 
         voeux_df, parametres_df, mapping_df, salle_par_creneau_df,
-        adjusted_quotas  # NOUVEAU paramètre
+        adjusted_quotas,  # NOUVEAU paramètre
+        nb_reserves_dynamique  # Paramètre dynamique pour les réserves
     )
     
     # Sauvegarder les résultats
     if result['status'] == 'ok' and len(result['affectations']) > 0:
         # Construire les structures nécessaires pour les stats
         salle_responsable = build_salle_responsable_mapping(planning_df)
-        creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df)
+        creneaux = build_creneaux_from_salles(salles_df, salle_responsable, salle_par_creneau_df, nb_reserves_dynamique)
         creneaux = map_creneaux_to_jours_seances(creneaux, mapping_df)
         teachers = build_teachers_dict(enseignants_df, parametres_df, adjusted_quotas)
         voeux_set = build_voeux_set(voeux_df)
@@ -1214,13 +1588,14 @@ def main():
     
     print("\nCONTRAINTES APPLIQUÉES :")
     print("   [HARD H1] ✓ Couverture complète des créneaux")
-    print("   [HARD H2A] ✓ Équité stricte par grade (écart ≤ 1)")
-    print("   [HARD H2B] ✓ Respect strict des vœux")
     print("   [HARD H2C] ✓ Responsable ne surveille pas sa propre salle")
     print("   [HARD H3A] ✓ Respect des quotas maximum (AJUSTÉS)")
-    print("   [SOFT S1] ✓ Dispersion optimisée dans la journée")
-    print("   [SOFT S2] ✓ Préférence pour présence responsables (souple)")
-    print("   [SOFT S3] ✓ Priorité pour quotas ajustés faibles (NOUVEAU)")
+    print("   [HARD H4] ✓ Équité absolue par grade (différence = 0)")
+    print("   [SOFT S1] ✓ Respect des vœux (poids 100)")
+    print("   [SOFT S2] ✓ Concentration sur minimum de jours (poids 50)")
+    print("   [SOFT S3] ✓ Écarts aux quotas (poids 10)")
+    print("   [SOFT S4] ✓ Priorité quotas ajustés faibles (poids 8)")
+    print("   [SOFT S5] ✓ Préférence présence responsables (poids 1)")
     print("="*60 + "\n")
 
 

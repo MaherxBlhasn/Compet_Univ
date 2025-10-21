@@ -301,8 +301,8 @@ def _analyze_grade_equity(db, id_session, aff_df):
             max_charge = int(max(charges))
             ecart = int(max_charge - min_charge)
             moyenne = float(sum(charges) / len(charges))
-            
-            equitable = ecart <= 1
+
+            equitable = (ecart == 0)
             if equitable:
                 grades_equitables += 1
             
