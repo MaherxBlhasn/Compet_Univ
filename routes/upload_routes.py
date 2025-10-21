@@ -1015,6 +1015,6 @@ def import_voeux_internal(filepath, id_session):
             continue
     db.commit()
     return {
-        'inserted': insereted,
+        'inserted': inserted,
         'errors': errors
     }
