@@ -1,0 +1,127 @@
+nom_ens,prenom_ens,abrv_ens,email_ens,grade_code_ens,code_smartex_ens,participe_surveillance
+Salhi,Salah,S. Salhi,salah.salhi@isi.utm.tn,PR,7,FALSE
+Belhouene,Imen,I.BELHOUENE,imen.somai@isi.utm.tn,PTC,100,TRUE
+Besbes,Ghada,G.BESBES,ghada.besbes@isi.utm.tn,MA,77,TRUE
+Essaied,Garoui,G.ESSAIED,essaied.garoui@isi.utm.tn,V,166,TRUE
+Issaoui,Leila,L.ISSAOUI,leila.issaoui@isi.utm.tn,V,183,TRUE
+Bahroun,Sahbi,S.BAHROUN,sahbi.bahroun@isi.utm.tn,MC,66,FALSE
+Mzid,Rania,R.MZID,rania.mzid@isi.utm.tn,MA,75,FALSE
+HIDRI,Afef,A.HIDRI,afef.hidri@isi.utm.tn,AC,138,TRUE
+Mheni,Sourour,S.MHENI,sourour.mhenni@isi.utm.tn,MA,48,TRUE
+Limam,Olfa,O.LIMAM,olfa.limam@isi.utm.tn,MA,87,TRUE
+Ben youssef,Nihel,N.BEN YOUSSEF,nihel.benyoussef@isi.utm.tn,MA,65,TRUE
+Miladi,Walid,W.MILADI,walid.miladi@isi.utm.tn,MA,15,FALSE
+Mibar,Hassen,H.MIBAR,hsan.miber@isi.utm.tn,MA,32,TRUE
+Mrabet,Wiem,W.MRABET,wiem.mrabet@isi.utm.tn,MA,74,TRUE
+Chbichib,Ahlem,A.CHBICHIB,ahlem.chbichib@isi.utm.tn,MA,250,TRUE
+Jridi,Safa,S.JRIDI,safa.jridi@isi.utm.tn,AC,232,TRUE
+Anis,Kroumi,K.ANIS,anis.kroumi@isi.utm.tn,V,301,TRUE
+Frikha,Mayssa,M.FRIKHA,mayssa.frikha@isi.utm.tn,MA,219,TRUE
+Aissa,Houda,H.AISSA,houda.aissa@isi.utm.tn,MA,13,TRUE
+Manai,Yassine,Y.MANAI,yassine.manai@isi.utm.tn,MA,38,TRUE
+Bannour,Yessine,Y.BANNOUR,yassine.bennour@isi.utm.tn,PTC,115,TRUE
+Dkhil,Fathi,F.DKHIL,fathi.dkhil@isi.utm.tn,PR,5,FALSE
+Bridaa,Nadia,N.BRIDAA,nadia.bridaa@isi.utm.tn,PTC,118,TRUE
+Khalfallah,Adel,A.KHALFALLAH,adel.khalfallah@isi.utm.tn,MA,55,FALSE
+Ben fradj,Hanene,H.BEN FRADJ,hanene.benfradj@isi.utm.tn,MA,25,TRUE
+Bidani,Amen,A.BIDANI,amen.bidani@isi.utm.tn,AC,41,TRUE
+Khemiri,Thouraya,T.KHEMIRI,thouraya.khemiri@isi.utm.tn,PTC,117,TRUE
+Bousaoudia,Imen,I.BOUSAOUDIA,imene.bessaoudia@isi.utm.tn,PTC,108,TRUE
+Youssef,Wassim,W.YOUSSEF,wassim.youssef@isi.utm.tn,MA,60,FALSE
+Zaafrani,Riadh,R.ZAAFRANI,riadh.zaafrani@isi.utm.tn,MA,62,TRUE
+Ouali,Sami,S.OUALI,sami.ouali@isi.utm.tn,MA,189,TRUE
+Rejichi,Safa,S.REJICHI,safa.rejichi@isi.utm.tn,MA,51,TRUE
+Mazhoud,Ilyes,I.MAZHOUD,ilyes.mazhoud@isi.utm.tn,AC,191,TRUE
+Ben Regaia,Moez,M.BEN REGAIA,moez.benrkaya@isi.utm.tn,PTC,116,TRUE
+Gouyaeib,Mouna,M.GOUYAEIB,mouna.gaieb@isi.utm.tn,PTC,206,TRUE
+Touj,Sofiene,S.TOUJ,sofien.touj@isi.utm.tn,MA,23,TRUE
+Lassoued,Imen,I.LASSOUED,imen.lassoued@isi.utm.tn,MA,76,TRUE
+Karoui,Wafa,W.KAROUI,wafa.karoui@isi.utm.tn,MC,57,TRUE
+Arous,Najet,N.AROUS,najet.arous@isi.utm.tn,PR,3,TRUE
+Rajia,Slim,S.RAJIA,rajia.slim@isi.utm.tn,MA,80,TRUE
+Khimiri,Alia,A.KHIMIRI,alia.khemiri@isi.utm.tn,AS,91,TRUE
+Ghazouani,Haythem,H.GHAZOUANI,haithem.ghazouani@isi.utm.tn,V,373,TRUE
+Ben ishak,Hichem,H.BEN ISHAK,hichem.benishak@isi.utm.tn,EX,127,TRUE
+Ben Azzouz,Zouhour,Z.BEN AZZOUZ,zouhour.benazouz@isi.utm.tn,MA,29,TRUE
+Ben Elakhal,Rim,R.BEN ELAKHAL,rim.benelakhal@isi.utm.tn,PTC,110,TRUE
+Zouaighia,Zakia,Z.ZOUAIGHIA,zakia.zouaghia@isi.utm.tn,PTC,207,TRUE
+Elaoud,Salma,S.ELAOUD,salma.elaoud@isi.utm.tn,MA,18,TRUE
+Metoui,Hejer,H.METOUI,hejer.metoui@isi.utm.tn,MA,19,TRUE
+Feki,Meriem,M.FEKI,mariem.feki@isi.utm.tn,MA,35,TRUE
+Marzouki,Kermane,K.MARZOUKI,kirmene.marzouki@isi.utm.tn,MA,72,TRUE
+Ayoub,Houli,H.AYOUB,ayoub.houili@isi.utm.tn,V,371,TRUE
+Tlili,Samar,S.TLILI,samar.tlili@isi.utm.tn,PES,225,TRUE
+Yahya,Faycel,F.YAHYA,faical.yahia@isi.utm.tn,EX,128,TRUE
+Oueslati,Foued,F.OUESLATI,foued.oueslati@isi.utm.tn,PTC,112,TRUE
+Hammi,Imene,I.HAMMI,imene.hammi@isi.utm.tn,AS,99,TRUE
+Mogaadi,Hayet,H.MOGAADI,hayet.mogaadi@isi.utm.tn,AS,96,TRUE
+Mariem,Nenni,N.MARIEM,meriem.nenni@isi.utm.tn,AC,238,TRUE
+Derbal,Lobna,L.DERBAL,lobna.derbal@isi.utm.tn,MA,17,TRUE
+Salhi,Salah,S.SALHI,direction@isi.utm.tn,PR,187,FALSE
+GAROUACHI,Walid,W.GAROUACHI,walid.garouachi@isi.utm.tn,V,241,TRUE
+Channouf,Zohra,Z.CHANNOUF,zohra.channouf@isi.utm.tn,PTC,113,TRUE
+Ouled Zaied,Azza,A.OULED ZAIED,azza.ouledzaid@isi.utm.tn,PR,8,TRUE
+Ouertani,Mourad,M.OUERTANI,mourad.ouertani@isi.utm.tn,MA,45,TRUE
+Bouriel,Kaouther,K.BOURIEL,kaouther.bouriel@isi.utm.tn,PTC,119,TRUE
+Tlili,Ali Sghaier,A.TLILI,ali.tlili@isi.utm.tn,PR,11,TRUE
+Sammoud,Khaled,K.SAMMOUD,khaled.sammoud@isi.utm.tn,MA,56,TRUE
+Zahaf,Sahbi,S.ZAHAF,sahbi.zahaf@isi.utm.tn,MA,84,TRUE
+Bouhajeb,Emna,E.BOUHAJEB,emna.bouhajeb@isi.utm.tn,AC,242,TRUE
+Bellaaj Mrabet,Najiba ,N.Bellaaj,najiba.bellaaj@isi.utm.tn,PR,6,FALSE
+Kallel,Mariem,M.KALLEL,mariem.kallel@isi.utm.tn,MA,50,TRUE
+Baccar,Cyrine,C.BACCAR,cyrine.baccar@isi.utm.tn,MC,12,TRUE
+Ben Krid,Hamza,H.BEN KRID,hamza.benkrid@isi.utm.tn,AC,240,TRUE
+Ouerghi,Hajer,H.OUERGHI,hajer.ouerghi@isi.utm.tn,V,223,TRUE
+Ben Rejeb,Sonia,S.BEN REJEB,sonia.benrejeb@isi.utm.tn,MC,44,TRUE
+Zaouali,Sonia,S.ZAOUALI,zaouali.sonia@isi.utm.tn,PES,102,TRUE
+Themry,Houda,H.THEMRI,houda.themri@isi.utm.tn,MA,302,TRUE
+Younes,Anis,A.YOUNES,anis.younes@isi.utm.tn,MA,216,TRUE
+Rekik,Ines,I.REKIK,ines.rekik@isi.utm.tn,MA,20,TRUE
+Chaabouni,Hamed,H.CHAABOUNI,hamed.chaabouni@isi.utm.tn,MA,34,FALSE
+Barhoumi,Walid,W.BARHOUMI,walid.barhoumi@isi.utm.tn,V,168,TRUE
+Ben Henda,Rabii,R.BEN HENDA,raby.benhenda@isi.utm.tn,PES,104,TRUE
+Ben Ayed,Dorra,D.BEN AYED,dorra.benayed@isi.utm.tn,MA,22,TRUE
+Bel Hadj Ali,Amen,A.BEL HADJ ALI,amen.benhadjali@isi.utm.tn,AS,98,TRUE
+Zagrouba,Ezzedine,E.ZAGROUBA,ezzeddine.zagrouba@isi.utm.tn,PR,1,FALSE
+Ayachi,Imen,I.AYACHI,imen.ayachi@isi.utm.tn,MA,37,FALSE
+Ben Hfaiedh,Imen,I.BEN HFAIEDH,imen.benhafaiedh@isi.utm.tn,MC,63,TRUE
+Kammarti,Rayen,R.KAMMARTI,rayen.kammarti@isi.utm.tn,MA,27,TRUE
+Ben Sassi,Olfa,O.BEN SASSI,olfa.bensassi@isi.utm.tn,MA,40,TRUE
+Loghmari,Med Anis,M.LOGHMARI,anis.loghmari@isi.utm.tn,MA,43,TRUE
+Ben Hlima,Sarra,S.BEN HLIMA,sarra.benhlima@etudiant-isi.utm.tn,AC,243,TRUE
+Nafti,Asma,A.NAFTI,asma.nafti@isi.utm.tn,PTC,120,TRUE
+Ben Abdallah,Houda,H.BEN ABDALLAH,houda.benabdallah@isi.utm.tn,MA,88,TRUE
+Mourali,Olfa,O.MOURALI,olfa.mourali@isi.utm.tn,MC,82,FALSE
+Zhioua,Ghayet Elmouna,G.ZHIOUA,gem.zhioua@isi.utm.tn,MA,71,TRUE
+Ben dhyef,Halima,H.BEN DHYEF,halima.bendhyef@isi.utm.tn,EX,192,TRUE
+Bouajina,Sonia,S.BOUAJINA,sonia.bouajina@isi.utm.tn,MA,46,TRUE
+Najar,Yousra,Y.NAJAR,yousra.najar@isi.utm.tn,MA,92,TRUE
+Choura,Fatma,F.CHOURA,fatma.choura@isi.utm.tn,V,90,FALSE
+Khouja,Omar,O.KHOUJA,omar.khouaja@isi.utm.tn,EX,300,TRUE
+Limam,Hela,H.LIMAM,hela.limam@isi.utm.tn,MA,86,TRUE
+Helaoui,Meher,M.HELAOUI,maher.helaoui@isi.utm.tn,MA,143,TRUE
+Hmouda,Imene,I.HMOUDA,imen.hmouda@isi.utm.tn,MA,33,TRUE
+Ferchichi,Moez,M.FERCHICHI,moez.ferchichi@isi.utm.tn,MA,53,TRUE
+Atef,Ben Miled,B.ATEF,atef.benmiled@isi.utm.tn,AC,315,TRUE
+Samir,Leila,L.SAMIR,leila.samir@isi.utm.tn,PTC,109,TRUE
+ZAOUI,Eya,E.ZAOUI,eya.zaoui@isi.utm.tn,V,234,TRUE
+Najjar,Monia,M.NAJJAR,monia.najar@isi.utm.tn,PR,9,FALSE
+IZID,Mohamed Amine,M.IZID,mohamedamine.izid@isi.utm.tn,V,244,TRUE
+Khemiri,Chokri,C.KHEMIRI,chokri.khemiri@isi.utm.tn,V,245,TRUE
+Seddik,Chiraz,C.SEDDIK,chiraz.seddik@isi.utm.tn,MC,26,TRUE
+Borgi,Amel,A.BORGI,amel.borgi@isi.utm.tn,PR,4,TRUE
+Zagrouba,Rachid,R.ZAGROUBA,rachid.zagrouba@isi.utm.tn,MA,67,TRUE
+Boulifa,Nadia,N.BOULIFA,nadia.boulifa@isi.utm.tn,PTC,111,TRUE
+Kaabi,Rim,R.KAABI,rim.kaabi@isi.utm.tn,MA,58,TRUE
+Ben Aicha,Feten,F.BEN AICHA,faten.benaicha@isi.utm.tn,MA,36,TRUE
+Ben Hariz,Narjes,N.BEN HARIZ,narjes.benhariz@isi.utm.tn,MA,97,TRUE
+Jlassi,Khaled,K.JLASSI,khaled.jlassi@isi.utm.tn,V,156,TRUE
+Haouari,Bakhta,B.HAOUARI,bakhta.haouari@isi.utm.tn,AS,101,TRUE
+Glaoui,Mohamed,M.GLAOUI,mohamed.glaoui@isi.utm.tn,MA,31,TRUE
+Hachani,Meha,M.HACHANI,meha.hachani@isi.utm.tn,MA,52,TRUE
+Ayari,Aymen,A.AYARI,aymen.ayari@isi.utm.tn,MA,236,FALSE
+Masmoudi Touj,Sameh,S.MASMOUDI TOUJ,sameh.masmoudi@isi.utm.tn,MA,24,TRUE
+Landolsi,Lamia,L.LANDOLSI,lamia.landolsi@isi.utm.tn,PTC,107,TRUE
+Ghazouani,Anis,A.GHAZOUANI,anis.ghazouani@isi.utm.tn,V,246,TRUE
+Katlane Kateb,Feten,F.KATLANE KATEB,faten.kateb@isi.utm.tn,MA,89,TRUE
+Mzoughi,Sonia,S.MZOUGHI,sonia.mzoughi@isi.utm.tn,PTC,106,TRUE

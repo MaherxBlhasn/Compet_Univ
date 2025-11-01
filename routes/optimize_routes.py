@@ -63,7 +63,9 @@ def run():
         "save": true,               // Sauvegarder en base de données
         "clear": true,              // Supprimer anciennes affectations avant
         "generate_files": true,     // Générer quota_enseignant.csv (Note: Pour les CSV d'affectations, utilisez /api/affectations/csv/<session_id>)
-        "generate_stats": true      // Générer les statistiques
+        "generate_stats": true,     // Générer les statistiques
+        "timeout": 120,             // Timeout en secondes (défaut: 120)
+        "fast_mode": false          // Mode rapide - désactive S4, S5, S6 (défaut: false)
     }
     
     Note: La génération des CSV d'affectations (global, par jour, convocations) 
@@ -76,6 +78,8 @@ def run():
     clear = data.get('clear', True)
     generate_files = data.get('generate_files', True)
     generate_stats = data.get('generate_stats', True)
+    timeout = data.get('timeout', 120)  # Nouveau paramètre
+    fast_mode = data.get('fast_mode', False)  # Nouveau paramètre
     
     if not session_id:
         return jsonify({
@@ -132,10 +136,14 @@ def run():
         
         # Run optimization
         print("\n4. Lancement de l'optimisation...")
+        print(f"   - Timeout: {timeout}s")
+        print(f"   - Mode rapide: {'OUI' if fast_mode else 'NON'}")
         result = optimize_surveillance_scheduling(
             enseignants_df, planning_df, salles_df,
             voeux_df, parametres_df, mapping_df, salle_par_creneau_df,
-            adjusted_quotas
+            adjusted_quotas,
+            timeout_seconds=timeout,
+            fast_mode=fast_mode
         )
         
         saved = 0

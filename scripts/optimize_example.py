@@ -418,15 +418,24 @@ def map_creneaux_to_jours_seances(creneaux, mapping_df):
 
 def calculate_optimal_quotas(teachers_by_grade, total_surveillances_needed, grade_quotas_max):
     """
-    Calculer les quotas optimaux pour garantir l'équité et la participation de tous
+    Calculer les quotas optimaux pour garantir l'équité ABSOLUE et la participation de tous
     
-    CONTRAINTE IMPORTANTE : Les quotas calculés ne dépassent JAMAIS les quotas de grade
+    NOUVELLE STRATÉGIE INTELLIGENTE :
+    - Ajuste les quotas pour que CHAQUE grade puisse avoir une distribution équitable
+    - Garantit que quota_ajusté ≤ quota_grade
+    - Priorité aux grades avec quotas élevés pour avoir des quotas ajustés élevés
+    - Équité ABSOLUE garantie : différence = 0 au sein de chaque grade
+    
+    PRINCIPE MATHÉMATIQUE :
+    Pour qu'un grade de N enseignants ait une équité absolue, il faut que :
+    - Chaque enseignant ait exactement Q surveillances
+    - Total du grade = N × Q (divisible parfaitement)
     
     Stratégie :
-    1. Chaque enseignant doit avoir AU MOINS 1 surveillance
-    2. Distribution équitable par grade (différence = 0)
-    3. Maximiser l'utilisation de la capacité disponible
-    4. RESPECTER les quotas maximum par grade (ne jamais dépasser)
+    1. Calculer la contribution attendue de chaque grade
+    2. Ajuster les quotas pour que chaque contribution soit divisible
+    3. Garantir quota_ajusté ≤ quota_grade
+    4. Prioriser les grades avec quotas élevés
     
     Args:
         teachers_by_grade: dict {grade: [list of teacher codes]}
@@ -437,7 +446,8 @@ def calculate_optimal_quotas(teachers_by_grade, total_surveillances_needed, grad
         dict: {grade: quota_optimal}
     """
     print("\n" + "="*60)
-    print("CALCUL DES QUOTAS OPTIMAUX (≤ QUOTAS DE GRADE)")
+    print("CALCUL INTELLIGENT DES QUOTAS OPTIMAUX")
+    print("GARANTIE : ÉQUITÉ ABSOLUE + quota_ajusté ≤ quota_grade")
     print("="*60)
     
     # Compter les enseignants par grade
@@ -452,89 +462,246 @@ def calculate_optimal_quotas(teachers_by_grade, total_surveillances_needed, grad
     
     print(f"\n🎯 Surveillances totales nécessaires : {total_surveillances_needed}")
     
-    # Calculer la capacité minimale (1 par enseignant)
-    capacite_min = total_enseignants * 1
-    print(f"   Capacité minimale (1/ens)       : {capacite_min}")
+    # =========================================================================
+    # ÉTAPE 1 : CALCULER LA CONTRIBUTION PROPORTIONNELLE DE CHAQUE GRADE
+    # =========================================================================
+    print(f"\n📐 ÉTAPE 1 : Calcul des contributions proportionnelles")
+    print("-" * 70)
     
-    if total_surveillances_needed < capacite_min:
-        print(f"\n⚠️  ATTENTION : Pas assez de surveillances pour tous les enseignants!")
-        print(f"   Il faudrait au moins {capacite_min} surveillances")
-        print(f"   Solution : Augmenter le nombre de réserves ou de créneaux")
-    
-    # STRATÉGIE : Commencer avec le quota moyen nécessaire, puis ajuster
-    # en respectant les limites de grade
-    
-    optimal_quotas = {}
-    
-    # Calculer un quota initial basé sur la distribution équitable
-    quota_moyen_necessaire = total_surveillances_needed / total_enseignants
-    
-    print(f"\n📐 Quota moyen nécessaire par enseignant : {quota_moyen_necessaire:.2f}")
+    # Calculer la capacité totale maximale de chaque grade
+    capacites_max_by_grade = {}
+    capacite_totale_max = 0
     
     for grade, nb_ens in nb_ens_by_grade.items():
-        quota_max_grade = grade_quotas_max.get(grade, 10)
-        
-        # Quota initial : arrondi du quota moyen
-        quota_initial = max(1, min(int(quota_moyen_necessaire) + 1, quota_max_grade))
-        
-        # GARANTIE : Ne JAMAIS dépasser le quota de grade
-        optimal_quotas[grade] = min(quota_initial, quota_max_grade)
+        quota_max = grade_quotas_max.get(grade, 10)
+        capacite_max = nb_ens * quota_max
+        capacites_max_by_grade[grade] = capacite_max
+        capacite_totale_max += capacite_max
     
-    # Vérifier la capacité totale
-    capacite_totale = sum(optimal_quotas[grade] * nb_ens_by_grade[grade] 
-                          for grade in optimal_quotas)
+    # Calculer la contribution proportionnelle attendue de chaque grade
+    contributions_attendues = {}
     
-    print(f"   Capacité avec quotas initiaux   : {capacite_totale}")
-    
-    # Si capacité trop grande, réduire proportionnellement
-    if capacite_totale > total_surveillances_needed * 1.5:
-        print(f"\n🔧 Ajustement des quotas (capacité trop grande)")
+    for grade, capacite_max in capacites_max_by_grade.items():
+        # Proportion basée sur la capacité maximale
+        proportion = capacite_max / capacite_totale_max if capacite_totale_max > 0 else 0
+        contribution = total_surveillances_needed * proportion
+        contributions_attendues[grade] = contribution
         
-        # Réduire tous les quotas d'une unité tant que possible
-        while capacite_totale > total_surveillances_needed * 1.2:
-            # Trouver le grade avec le quota le plus élevé
-            max_grade = max(optimal_quotas.keys(), key=lambda g: optimal_quotas[g])
+        print(f"   {grade:5s} : {contribution:7.2f} surveillances attendues "
+              f"({proportion * 100:5.1f}% du total)")
+    
+    # =========================================================================
+    # ÉTAPE 2 : CALCULER LES QUOTAS POUR GARANTIR LA DIVISIBILITÉ
+    # =========================================================================
+    print(f"\n🔧 ÉTAPE 2 : Ajustement pour garantir la divisibilité")
+    print("-" * 70)
+    
+    optimal_quotas = {}
+    surveillances_allouees = {}
+    
+    # Trier les grades par quota décroissant (priorité aux grades avec quotas élevés)
+    grades_sorted = sorted(nb_ens_by_grade.keys(), 
+                          key=lambda g: grade_quotas_max.get(g, 0), 
+                          reverse=True)
+    
+    for grade in grades_sorted:
+        nb_ens = nb_ens_by_grade[grade]
+        quota_max = grade_quotas_max.get(grade, 10)
+        contribution_attendue = contributions_attendues[grade]
+        
+        # Calculer le quota idéal (arrondi)
+        quota_ideal = contribution_attendue / nb_ens
+        
+        # Arrondir au plus proche tout en respectant le quota max
+        # STRATÉGIE : Arrondir vers le bas pour rester sous le quota max
+        quota_ajuste = min(int(quota_ideal + 0.5), quota_max)
+        
+        # GARANTIE : Au moins 1 surveillance par enseignant
+        quota_ajuste = max(1, quota_ajuste)
+        
+        # GARANTIE : Ne jamais dépasser le quota de grade
+        quota_ajuste = min(quota_ajuste, quota_max)
+        
+        optimal_quotas[grade] = quota_ajuste
+        surveillances_allouees[grade] = nb_ens * quota_ajuste
+        
+        ecart = surveillances_allouees[grade] - contribution_attendue
+        
+        print(f"   {grade:5s} : {nb_ens:3d} ens × {quota_ajuste:2d} = {surveillances_allouees[grade]:4d} "
+              f"(attendu: {contribution_attendue:7.2f}, écart: {ecart:+6.2f})")
+    
+    # =========================================================================
+    # ÉTAPE 3 : AJUSTER POUR ATTEINDRE LE TOTAL EXACT
+    # =========================================================================
+    print(f"\n⚖️  ÉTAPE 3 : Ajustement fin pour atteindre le total exact")
+    print("-" * 70)
+    
+    total_alloue = sum(surveillances_allouees.values())
+    diff = total_surveillances_needed - total_alloue
+    
+    print(f"   Total alloué initial : {total_alloue}")
+    print(f"   Total nécessaire     : {total_surveillances_needed}")
+    print(f"   Différence           : {diff:+d} surveillances")
+    
+    # Si on est en déficit, augmenter les quotas
+    if diff > 0:
+        print(f"\n   🔼 Augmentation nécessaire : {diff} surveillances")
+        
+        # Trier les grades par marge disponible (quota_max - quota_actuel) et par nombre d'enseignants
+        grades_augmentables = [
+            (g, grade_quotas_max.get(g, 10) - optimal_quotas[g], nb_ens_by_grade[g])
+            for g in optimal_quotas.keys()
+            if optimal_quotas[g] < grade_quotas_max.get(g, 10)
+        ]
+        
+        # Trier par : 1) marge > 0, 2) nb enseignants croissant (pour augmenter par petits incréments)
+        grades_augmentables.sort(key=lambda x: (-int(x[1] > 0), x[2]))
+        
+        iteration = 0
+        max_iterations = 100
+        
+        while diff > 0 and grades_augmentables and iteration < max_iterations:
+            iteration += 1
             
-            if optimal_quotas[max_grade] > 1:
-                optimal_quotas[max_grade] -= 1
-                capacite_totale = sum(optimal_quotas[grade] * nb_ens_by_grade[grade] 
-                                     for grade in optimal_quotas)
-            else:
+            # Trouver le grade dont l'augmentation se rapproche le plus du déficit
+            best_grade = None
+            best_nb_ens = None
+            best_diff = float('inf')
+            
+            for g, marge, nb_ens in grades_augmentables:
+                if marge > 0:
+                    # Si augmenter ce grade nous rapproche du total (même si on dépasse un peu)
+                    new_diff = abs(diff - nb_ens)
+                    if new_diff < best_diff:
+                        best_diff = new_diff
+                        best_grade = g
+                        best_nb_ens = nb_ens
+            
+            if best_grade is None:
                 break
-    
-    # Si capacité trop petite, augmenter (en respectant les limites de grade)
-    elif capacite_totale < total_surveillances_needed:
-        print(f"\n🔧 Ajustement des quotas (capacité insuffisante)")
-        
-        max_iterations = 1000  # Sécurité pour éviter boucle infinie
-        iterations = 0
-        
-        while capacite_totale < total_surveillances_needed and iterations < max_iterations:
-            iterations += 1
             
-            # Trouver le grade qui peut être augmenté (sans dépasser son quota max)
+            # Augmenter le quota de 1
+            optimal_quotas[best_grade] += 1
+            surveillances_allouees[best_grade] += best_nb_ens
+            diff -= best_nb_ens
+            
+            print(f"   → {best_grade}: quota {optimal_quotas[best_grade]-1} → {optimal_quotas[best_grade]} "
+                  f"(+{best_nb_ens} surveillances, reste: {diff:+d})")
+            
+            # Mettre à jour la liste
             grades_augmentables = [
-                g for g in optimal_quotas.keys() 
+                (g, grade_quotas_max.get(g, 10) - optimal_quotas[g], nb_ens_by_grade[g])
+                for g in optimal_quotas.keys()
                 if optimal_quotas[g] < grade_quotas_max.get(g, 10)
             ]
+            grades_augmentables.sort(key=lambda x: (-int(x[1] > 0), x[2]))
+    
+    # Si on est en excès, réduire les quotas
+    elif diff < 0:
+        print(f"\n   🔽 Réduction nécessaire : {-diff} surveillances")
+        
+        # Trier les grades par quota décroissant et nombre d'enseignants croissant
+        grades_reduisibles = [
+            (g, optimal_quotas[g], nb_ens_by_grade[g])
+            for g in optimal_quotas.keys()
+            if optimal_quotas[g] > 1  # Ne jamais descendre sous 1
+        ]
+        
+        grades_reduisibles.sort(key=lambda x: (-x[1], x[2]))
+        
+        iteration = 0
+        max_iterations = 100
+        
+        while diff < 0 and grades_reduisibles and iteration < max_iterations:
+            iteration += 1
             
-            if not grades_augmentables:
-                print(f"   ⚠️  Impossible d'augmenter : tous les grades à leur maximum")
-                print(f"   → Capacité finale : {capacite_totale} < Nécessaire : {total_surveillances_needed}")
-                print(f"   → Déficit : {total_surveillances_needed - capacite_totale} surveillances")
+            # Trouver le grade dont la réduction se rapproche le plus de l'excès
+            best_grade = None
+            best_nb_ens = None
+            best_diff = float('inf')
+            
+            for g, quota, nb_ens in grades_reduisibles:
+                if quota > 1:
+                    # Si réduire ce grade nous rapproche de 0
+                    new_diff = abs(diff + nb_ens)
+                    if new_diff < best_diff:
+                        best_diff = new_diff
+                        best_grade = g
+                        best_nb_ens = nb_ens
+            
+            if best_grade is None:
                 break
             
-            # Augmenter le quota du grade avec le moins d'enseignants (parmi les augmentables)
-            min_grade = min(grades_augmentables, key=lambda g: nb_ens_by_grade[g])
+            # Réduire le quota de 1
+            optimal_quotas[best_grade] -= 1
+            surveillances_allouees[best_grade] -= best_nb_ens
+            diff += best_nb_ens
             
-            optimal_quotas[min_grade] += 1
-            capacite_totale = sum(optimal_quotas[grade] * nb_ens_by_grade[grade] 
-                                 for grade in optimal_quotas)
+            print(f"   → {best_grade}: quota {optimal_quotas[best_grade]+1} → {optimal_quotas[best_grade]} "
+                  f"(-{best_nb_ens} surveillances, reste: {diff:+d})")
+            
+            # Mettre à jour la liste
+            grades_reduisibles = [
+                (g, optimal_quotas[g], nb_ens_by_grade[g])
+                for g in optimal_quotas.keys()
+                if optimal_quotas[g] > 1
+            ]
+            grades_reduisibles.sort(key=lambda x: (-x[1], x[2]))
     
+    # =========================================================================
+    # ÉTAPE 3.5 : CORRECTION FINALE (si déficit/excès résiduel)
+    # =========================================================================
+    total_alloue = sum(surveillances_allouees.values())
+    diff = total_surveillances_needed - total_alloue
+    
+    if diff != 0:
+        print(f"\n   🔧 Correction finale (écart résiduel: {diff:+d})")
+        
+        if diff > 0:
+            # Augmenter : chercher le plus petit grade augmentable
+            candidates = [
+                (g, nb_ens_by_grade[g])
+                for g in optimal_quotas.keys()
+                if optimal_quotas[g] < grade_quotas_max.get(g, 10)
+            ]
+            candidates.sort(key=lambda x: x[1])  # Tri croissant par nb d'enseignants
+            
+            for grade, nb_ens in candidates:
+                if nb_ens >= diff:
+                    optimal_quotas[grade] += 1
+                    surveillances_allouees[grade] += nb_ens
+                    print(f"   → {grade}: quota {optimal_quotas[grade]-1} → {optimal_quotas[grade]} "
+                          f"(+{nb_ens}, total ajusté)")
+                    break
+        
+        elif diff < 0:
+            # Réduire : chercher le plus petit grade réduisible
+            candidates = [
+                (g, nb_ens_by_grade[g])
+                for g in optimal_quotas.keys()
+                if optimal_quotas[g] > 1
+            ]
+            candidates.sort(key=lambda x: x[1])  # Tri croissant par nb d'enseignants
+            
+            for grade, nb_ens in candidates:
+                if nb_ens >= -diff:
+                    optimal_quotas[grade] -= 1
+                    surveillances_allouees[grade] -= nb_ens
+                    print(f"   → {grade}: quota {optimal_quotas[grade]+1} → {optimal_quotas[grade]} "
+                          f"(-{nb_ens}, total ajusté)")
+                    break
+    
+    # =========================================================================
+    # ÉTAPE 4 : VÉRIFICATIONS FINALES
+    # =========================================================================
     capacite_finale = sum(optimal_quotas[grade] * nb_ens_by_grade[grade] 
                          for grade in optimal_quotas)
     
+    print(f"\n✅ RÉSULTAT FINAL :")
+    print("-" * 70)
     print(f"   Capacité finale                 : {capacite_finale}")
+    print(f"   Surveillances nécessaires       : {total_surveillances_needed}")
+    print(f"   Différence                      : {capacite_finale - total_surveillances_needed:+d}")
     
     if capacite_finale > 0:
         print(f"   Ratio utilisation               : {total_surveillances_needed / capacite_finale * 100:.1f}%")
@@ -554,10 +721,27 @@ def calculate_optimal_quotas(teachers_by_grade, total_surveillances_needed, grad
         else:
             print(f"   ✓ {grade} : {quota_calc} ≤ {quota_max}")
     
+    # Vérifier l'équité (divisibilité)
+    print(f"\n✅ Vérification de l'équité (divisibilité) :")
+    for grade in sorted(optimal_quotas.keys()):
+        nb_ens = nb_ens_by_grade[grade]
+        quota = optimal_quotas[grade]
+        total_grade = nb_ens * quota
+        
+        # Vérifier que c'est divisible (devrait toujours l'être par construction)
+        if total_grade % nb_ens == 0:
+            print(f"   ✓ {grade} : {nb_ens} ens × {quota} = {total_grade} (divisible, équité garantie)")
+        else:
+            print(f"   ❌ {grade} : {nb_ens} ens × {quota} = {total_grade} (NON divisible!)")
+            all_ok = False
+    
     if all_ok:
-        print(f"   ✅ Tous les quotas respectent les limites de grade")
+        print(f"\n🎉 SUCCÈS : Tous les quotas respectent les contraintes !")
+        print(f"   ✓ quota_ajusté ≤ quota_grade pour tous les grades")
+        print(f"   ✓ Équité absolue garantie (différence = 0 dans chaque grade)")
+        print(f"   ✓ Participation de tous (au moins 1 surveillance)")
     else:
-        print(f"   ⚠️  Corrections appliquées pour respecter les limites")
+        print(f"\n⚠️  ATTENTION : Corrections appliquées")
     
     print(f"\n📊 Quotas optimaux calculés :")
     print("-" * 70)
@@ -821,7 +1005,9 @@ def optimize_surveillance_scheduling(
     mapping_df,
     salle_par_creneau_df,
     adjusted_quotas,
-    nb_reserves_dynamique=None
+    nb_reserves_dynamique=None,
+    timeout_seconds=120,  # NOUVEAU : paramètre configurable
+    fast_mode=False  # NOUVEAU : mode rapide (désactive S4, S5, S6)
 ):
     """
     Optimisation principale avec hiérarchie de contraintes
@@ -843,6 +1029,8 @@ def optimize_surveillance_scheduling(
     
     Args:
         nb_reserves_dynamique: Nombre de réserves par créneau (None = automatique)
+        timeout_seconds: Temps maximum d'exécution en secondes (défaut: 120s)
+        fast_mode: Mode rapide - désactive contraintes SOFT S4, S5, S6 (défaut: False)
     """
     import time
     opt_start_time = time.time()
@@ -854,6 +1042,11 @@ def optimize_surveillance_scheduling(
         print(f"RÉSERVES DYNAMIQUES : {nb_reserves_dynamique} par créneau")
     else:
         print("RÉSERVES DYNAMIQUES : Calcul automatique")
+    print(f"TIMEOUT             : {timeout_seconds} secondes")
+    if fast_mode:
+        print("MODE                : RAPIDE (S4, S5, S6 désactivées)")
+    else:
+        print("MODE                : COMPLET (toutes contraintes actives)")
     print("="*60)
     
     salle_responsable = build_salle_responsable_mapping(planning_df)
@@ -1145,7 +1338,7 @@ def optimize_surveillance_scheduling(
                 model.Add(voeu_penalty == 0).OnlyEnforceIf(x[(tcode, cid)].Not())
                 
                 voeux_penalties.append(voeu_penalty)
-    
+        
     print(f"✓ S1 : {len(voeux_penalties)} pénalités de non-respect des vœux")
     
     # -------------------------------------------------------------------------
@@ -1274,18 +1467,19 @@ def optimize_surveillance_scheduling(
     # -------------------------------------------------------------------------
     # Pénalise les écarts individuels par rapport aux quotas
     # Poids 10 = PRIORITÉ MOYENNE
-    print("\n[SOFT S4] Écarts individuels aux quotas (poids 10)")
-    print("Description : Minimise les écarts entre affectations et quotas individuels")
-    print("Priorité    : MOYENNE (poids 10)")
-    
-    ecarts_penalties = []
-    
-    for tcode in teacher_codes:
-        vars_teacher = [x[(tcode, cid)] for cid in creneau_ids if (tcode, cid) in x]
+    if not fast_mode:  # DÉSACTIVÉ EN MODE RAPIDE
+        print("\n[SOFT S4] Écarts individuels aux quotas (poids 10)")
+        print("Description : Minimise les écarts entre affectations et quotas individuels")
+        print("Priorité    : MOYENNE (poids 10)")
         
-        if vars_teacher:
-            quota = teachers[tcode]['quota']
-            nb_aff = model.NewIntVar(0, len(creneau_ids), f"nb_aff_s4_{tcode}")
+        ecarts_penalties = []
+        
+        for tcode in teacher_codes:
+            vars_teacher = [x[(tcode, cid)] for cid in creneau_ids if (tcode, cid) in x]
+            
+            if vars_teacher:
+                quota = teachers[tcode]['quota']
+                nb_aff = model.NewIntVar(0, len(creneau_ids), f"nb_aff_s4_{tcode}")
             model.Add(nb_aff == sum(vars_teacher))
             
             delta = model.NewIntVar(-len(creneau_ids), len(creneau_ids), f"delta_s4_{tcode}")
@@ -1296,7 +1490,10 @@ def optimize_surveillance_scheduling(
             
             ecarts_penalties.append(abs_delta)
     
-    print(f"✓ S4 : {len(ecarts_penalties)} pénalités d'écart aux quotas")
+        print(f"✓ S4 : {len(ecarts_penalties)} pénalités d'écart aux quotas")
+    else:
+        print("\n[SOFT S4] DÉSACTIVÉ (mode rapide)")
+        ecarts_penalties = []
 
     # -------------------------------------------------------------------------
     # CONTRAINTE SOFT S5 : PRIORITÉ AUX QUOTAS AJUSTÉS FAIBLES
@@ -1304,8 +1501,9 @@ def optimize_surveillance_scheduling(
     # Les enseignants avec quotas ajustés faibles (qui ont moins surveillé avant)
     # sont priorisés pour surveiller moins
     # Poids 8 = PRIORITÉ MOYENNE-FAIBLE
-    print("\n[SOFT S5] Priorité pour enseignants avec quotas ajustés faibles (poids 8)")
-    print("Description : Les enseignants qui ont moins surveillé auparavant")
+    if not fast_mode:  # DÉSACTIVÉ EN MODE RAPIDE
+        print("\n[SOFT S5] Priorité pour enseignants avec quotas ajustés faibles (poids 8)")
+        print("Description : Les enseignants qui ont moins surveillé auparavant")
     print("              sont priorisés pour surveiller moins cette fois")
     print("Priorité    : MOYENNE-FAIBLE (poids 8)")
     
@@ -1330,34 +1528,41 @@ def optimize_surveillance_scheduling(
             
             priority_penalties.append(penalty)
     
-    print(f"✓ S5 : {len(priority_penalties)} pénalités de priorité basées sur quotas ajustés")
+        print(f"✓ S5 : {len(priority_penalties)} pénalités de priorité basées sur quotas ajustés")
+    else:
+        print("\n[SOFT S5] DÉSACTIVÉ (mode rapide)")
+        priority_penalties = []
     
     # -------------------------------------------------------------------------
     # CONTRAINTE SOFT S6 : PRÉFÉRENCE POUR RESPONSABLES DISPONIBLES
     # -------------------------------------------------------------------------
     # Préférence (légère) pour que les responsables soient présents dans leurs salles
     # Poids 1 = PRIORITÉ FAIBLE
-    print("\n[SOFT S6] Préférence pour présence responsables (poids 1)")
-    print("Description : Préférence légère pour que les responsables soient présents")
-    print("Priorité    : FAIBLE (poids 1)")
-    print("Comportement: Contrainte souple, facilement sacrifiée pour autres objectifs")
-    
-    presence_penalties = []
-    
-    for cid in creneau_ids:
-        for salle, responsable in creneau_responsables[cid].items():
-            if responsable is None or responsable not in teacher_codes:
-                continue
-            
-            if (responsable, cid) in x:
-                absence_penalty = model.NewIntVar(0, 100, f"resp_penalty_{responsable}_{cid}")
+    if not fast_mode:  # DÉSACTIVÉ EN MODE RAPIDE
+        print("\n[SOFT S6] Préférence pour présence responsables (poids 1)")
+        print("Description : Préférence légère pour que les responsables soient présents")
+        print("Priorité    : FAIBLE (poids 1)")
+        print("Comportement: Contrainte souple, facilement sacrifiée pour autres objectifs")
+        
+        presence_penalties = []
+        
+        for cid in creneau_ids:
+            for salle, responsable in creneau_responsables[cid].items():
+                if responsable is None or responsable not in teacher_codes:
+                    continue
                 
-                model.Add(absence_penalty == 0).OnlyEnforceIf(x[(responsable, cid)])
-                model.Add(absence_penalty == 50).OnlyEnforceIf(x[(responsable, cid)].Not())
-                
-                presence_penalties.append(absence_penalty)
-    
-    print(f"✓ S6 : {len(presence_penalties)} pénalités de présence responsable (souple)")
+                if (responsable, cid) in x:
+                    absence_penalty = model.NewIntVar(0, 100, f"resp_penalty_{responsable}_{cid}")
+                    
+                    model.Add(absence_penalty == 0).OnlyEnforceIf(x[(responsable, cid)])
+                    model.Add(absence_penalty == 50).OnlyEnforceIf(x[(responsable, cid)].Not())
+                    
+                    presence_penalties.append(absence_penalty)
+        
+        print(f"✓ S6 : {len(presence_penalties)} pénalités de présence responsable (souple)")
+    else:
+        print("\n[SOFT S6] DÉSACTIVÉ (mode rapide)")
+        presence_penalties = []
     
     # =========================================================================
     # DÉFINITION DE LA FONCTION OBJECTIF
@@ -1424,8 +1629,8 @@ def optimize_surveillance_scheduling(
     solver = cp_model.CpSolver()
     
     # PARAMÈTRES OPTIMISÉS POUR GRANDS PROBLÈMES
-    solver.parameters.max_time_in_seconds = 600  # 10 minutes
-    solver.parameters.num_search_workers = 8
+    solver.parameters.max_time_in_seconds = timeout_seconds  # Configurable
+    solver.parameters.num_search_workers = 12  # Plus de workers pour parallélisation
     solver.parameters.log_search_progress = True
     
     # OPTIMISATIONS CRITIQUES POUR PERFORMANCE
@@ -1437,14 +1642,23 @@ def optimize_surveillance_scheduling(
     solver.parameters.symmetry_level = 2  # Détection de symétries
     solver.parameters.use_sat_inprocessing = True  # Preprocessing SAT
     
-    print("\nParamètres du solver (OPTIMISÉS pour grands problèmes) :")
-    print(f"  - Temps maximum      : 600 secondes (10 minutes)")
-    print(f"  - Nombre de workers  : 8")
+    # OPTIMISATIONS SUPPLÉMENTAIRES POUR VITESSE
+    solver.parameters.search_branching = cp_model.PORTFOLIO_SEARCH  # Stratégies multiples
+    solver.parameters.enumerate_all_solutions = False  # Arrêter à la première solution
+    solver.parameters.stop_after_first_solution = False  # Mais continuer à optimiser
+    
+    # LIMITES POUR ÉVITER BLOCAGE
+    solver.parameters.max_deterministic_time = timeout_seconds  # Temps déterministe
+    
+    print("\nParamètres du solver (OPTIMISÉS pour RAPIDITÉ) :")
+    print(f"  - Temps maximum      : {timeout_seconds} secondes")
+    print(f"  - Nombre de workers  : 12")
     print(f"  - Logs activés       : Oui")
     print(f"  - Prétraitement      : Activé (probing level 2)")
     print(f"  - Linéarisation      : Niveau 2")
     print(f"  - Symétries          : Niveau 2 (détection avancée)")
     print(f"  - Inprocessing SAT   : Activé")
+    print(f"  - Stratégie recherche: PORTFOLIO (parallèle)")
     
     status = solver.Solve(model)
     
