@@ -14,10 +14,28 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # PyInstaller
 *.manifest
 *.spec
+app.spec
+app.build/
+app.dist/
 
 # Installer logs
 pip-log.txt
@@ -53,6 +71,8 @@ instance/
 # Environments
 .env
 .env.*
+.env.local
+.env.production
 
 # VS Code
 .vscode/
@@ -75,6 +95,7 @@ surveillance.db
 results/
 uploads/
 exports/
+test_files/
 
 # Excel / generated files
 *.xlsx
